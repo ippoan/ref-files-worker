@@ -1,0 +1,85 @@
+name: Sync ts-rs types
+
+# Single source of truth: ref-files-mcp-server-rs/src/types/ (Rust + ts-rs).
+# This workflow regenerates the TypeScript bindings from a pinned ref of
+# ref-files-mcp-server-rs and fails the PR if `src/types/` here drifts.
+#
+# Trigger model:
+#   - pull_request: PR がここの DTO を勝手に書き換えていないかチェック
+#   - workflow_dispatch: Rust 側が更新された時に手動で同期させる用 (将来は
+#     repository_dispatch で ref-files-mcp-server-rs CI から発火)
+#
+# 既定の ref は `main`。Rust 側 release tag (例 `v0.1.0`) に固定したい場合は
+# workflow_dispatch の `rust_ref` input で上書きする。
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/types/**'
+      - '.github/workflows/sync-types.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/types/**'
+      - '.github/workflows/sync-types.yml'
+  workflow_dispatch:
+    inputs:
+      rust_ref:
+        description: 'Ref of ippoan/ref-files-mcp-server-rs to regenerate from'
+        required: false
+        type: string
+        default: 'main'
+
+permissions:
+  contents: read
+
+jobs:
+  drift-check:
+    name: ts-rs drift check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout ref-files-worker
+        uses: actions/checkout@v4
+        with:
+          path: worker
+
+      - name: Checkout ref-files-mcp-server-rs
+        uses: actions/checkout@v4
+        with:
+          repository: ippoan/ref-files-mcp-server-rs
+          ref: ${{ inputs.rust_ref || 'main' }}
+          path: mcp-server
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: mcp-server
+          # share cache with the Rust repo's own rust-ci.yml runs
+          shared-key: ref-files-mcp-server-rs
+
+      - name: Regenerate ts-bindings
+        working-directory: mcp-server
+        run: cargo run --bin gen-ts --locked
+
+      - name: Copy bindings into worker/src/types
+        run: |
+          set -euo pipefail
+          # Preserve the README.md that documents the directory; replace only
+          # the generated .ts files (delete-then-copy to catch removed types).
+          find worker/src/types -name '*.ts' -type f -delete
+          cp mcp-server/ts-bindings/*.ts worker/src/types/
+
+      - name: Fail on drift
+        working-directory: worker
+        run: |
+          set -euo pipefail
+          if ! git diff --exit-code -- src/types/; then
+            echo "::error::src/types/ drifted from ref-files-mcp-server-rs."
+            echo "Regenerate locally with:"
+            echo "  (cd ../ref-files-mcp-server-rs && cargo run --bin gen-ts)"
+            echo "  cp ../ref-files-mcp-server-rs/ts-bindings/*.ts ./src/types/"
+            exit 1
+          fi
+          echo "src/types/ is in sync with ref-files-mcp-server-rs."

@@ -1,0 +1,36 @@
+name = "ref-files-worker"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+# auth-worker と同じアカウント。Phase 0 では prod 用のみ。staging は
+# `[env.staging]` ブロックで上書きする想定 (Phase 1 で d1/r2 を作成後に追加)。
+account_id = "24b45709d060d957340180e995f0d373"
+
+[vars]
+WORKER_ENV = "prod"
+# auth-worker origin — `Authorization: Bearer <mcp jwt>` の `aud` / 公開鍵検証で参照。
+AUTH_WORKER_ORIGIN = "https://auth.ippoan.org"
+# JWT の `aud` claim。auth-worker の mcp-jwt 実装と一致させる。
+MCP_JWT_AUDIENCE = "https://ref-files.ippoan.org"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+# D1: メタデータ (repos / folders / files / revisions)。
+# `id` の値は Phase 1 で `wrangler d1 create ref_files` してから埋める。
+[[d1_databases]]
+binding = "DB"
+database_name = "ref_files"
+database_id = "REPLACE_ME_AFTER_wrangler_d1_create"
+migrations_dir = "migrations"
+
+# R2: ファイル本体。Key 形式は `files/{repo_id}/{file_id}/{rev_number}`。
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "ref-files-blobs"
+
+# JWT 検証鍵などは secret で渡す:
+#   wrangler secret put MCP_JWT_SECRET
+#
+# auth-worker (src/lib/mcp-jwt.ts) と同じ HS256 secret を共有する。
+# Phase 1 で署名鍵ローテーションが入る場合は JWKS endpoint からの fetch に切替予定。

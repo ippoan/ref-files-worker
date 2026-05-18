@@ -1,0 +1,25 @@
+{
+  "name": "ref-files-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Worker backend for ref-files-mcp-server-rs — D1 (repos/folders/files/revisions) + R2 (blob storage) + auth-worker JWT verify.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "deploy:staging": "wrangler deploy --env staging",
+    "typecheck": "tsc --noEmit",
+    "d1:migrate:local": "wrangler d1 migrations apply ref_files --local",
+    "d1:migrate:prod": "wrangler d1 migrations apply ref_files --remote",
+    "drizzle:generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.36.0",
+    "hono": "^4.6.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "drizzle-kit": "^0.28.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.95.0"
+  }
+}

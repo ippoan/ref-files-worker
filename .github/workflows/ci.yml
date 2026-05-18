@@ -1,0 +1,28 @@
+name: CI
+
+# Reuses ci-workflows/frontend-ci.yml with project_type=worker (typecheck via
+# `tsc --noEmit`, deploy via `wrangler deploy`). Same pattern other ippoan
+# worker repos (e.g. auth-worker) use.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  ci:
+    uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
+    with:
+      project_type: worker
+      # Phase 0 ships no tests yet; flip to true when Phase 1 lands vitest.
+      has_tests: false
+      # No staging d1/r2 provisioned yet — skip deploy until Phase 1 wires
+      # `wrangler.toml [env.staging]`.
+      has_deploy: false
+    secrets: inherit
