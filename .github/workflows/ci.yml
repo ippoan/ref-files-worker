@@ -21,9 +21,6 @@ jobs:
     uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
     with:
       project_type: worker
-      # `npm install` (not `npm ci`) — Phase 0 ships no package-lock.json yet;
-      # auth-worker uses the same flag for the same reason.
-      install_command: 'npm install'
       # Phase 0 ships no tests yet; flip to true when Phase 1 lands vitest.
       has_tests: false
       # No staging d1/r2 provisioned yet — skip deploy until Phase 1 wires
