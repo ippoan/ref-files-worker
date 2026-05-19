@@ -8,6 +8,16 @@ import { defineWorkersConfig } from "@cloudflare/vitest-pool-workers/config";
  */
 export default defineWorkersConfig({
   test: {
+    // v8 coverage breaks `vitest-pool-workers` (the workerd isolate can't be
+    // attached to a host-side v8 inspector). istanbul instruments at the
+    // source level via babel, so it travels into workerd just fine.
+    coverage: {
+      provider: "istanbul",
+      reporter: ["text", "json-summary", "lcov"],
+      reportsDirectory: "./coverage",
+      include: ["src/**/*.ts"],
+      exclude: ["src/types/**", "src/db/schema.ts", "src/index.ts"],
+    },
     poolOptions: {
       workers: {
         miniflare: {
