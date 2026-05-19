@@ -1,0 +1,29 @@
+name: CI
+
+# Reuses ci-workflows/frontend-ci.yml with project_type=worker (typecheck via
+# `tsc --noEmit`, deploy via `wrangler deploy`). Same pattern other ippoan
+# worker repos (e.g. auth-worker) use.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  packages: read
+
+jobs:
+  ci:
+    uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
+    with:
+      project_type: worker
+      # Phase 1 lands vitest-pool-workers — enable the Vitest + Coverage gate.
+      has_tests: true
+      # No staging d1/r2 provisioned yet — skip deploy until `wrangler d1
+      # create ref_files` and `wrangler.toml [env.staging]` land (Phase 2).
+      has_deploy: false
+    secrets: inherit
