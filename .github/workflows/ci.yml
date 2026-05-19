@@ -21,9 +21,9 @@ jobs:
     uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
     with:
       project_type: worker
-      # Phase 0 ships no tests yet; flip to true when Phase 1 lands vitest.
-      has_tests: false
-      # No staging d1/r2 provisioned yet — skip deploy until Phase 1 wires
-      # `wrangler.toml [env.staging]`.
+      # Phase 1 lands vitest-pool-workers — enable the Vitest + Coverage gate.
+      has_tests: true
+      # No staging d1/r2 provisioned yet — skip deploy until `wrangler d1
+      # create ref_files` and `wrangler.toml [env.staging]` land (Phase 2).
       has_deploy: false
     secrets: inherit
