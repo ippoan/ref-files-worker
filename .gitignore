@@ -6,3 +6,7 @@ dist/
 
 # Drizzle local artifacts
 .drizzle/
+
+# Vitest coverage reports
+coverage/
+
