@@ -29,8 +29,45 @@ migrations_dir = "migrations"
 binding = "BLOBS"
 bucket_name = "ref-files-blobs"
 
-# JWT 検証鍵などは secret で渡す:
-#   wrangler secret put MCP_JWT_SECRET
+# JWT 検証鍵などは secret で渡す (prod / staging とも同名):
+#   wrangler secret put MCP_JWT_SECRET                        # prod
+#   wrangler secret put MCP_JWT_SECRET         --env staging
+#   wrangler secret put INTERNAL_SHARED_SECRET                # prod
+#   wrangler secret put INTERNAL_SHARED_SECRET --env staging  # auth-worker と同値
 #
 # auth-worker (src/lib/mcp-jwt.ts) と同じ HS256 secret を共有する。
-# Phase 1 で署名鍵ローテーションが入る場合は JWKS endpoint からの fetch に切替予定。
+# INTERNAL_SHARED_SECRET は `POST /mcp/introspect` の mode 2 (raw shared
+# secret) で `ref-files-mcp-server-rs` binary を認証する用。auth-worker の
+# 同名 secret と必ず同値にすること (binary は両 worker を同じ値で叩く)。
+
+# ─── Staging ────────────────────────────────────────────────────────────────
+# `wrangler d1 create ref_files_staging` と
+# `wrangler r2 bucket create ref-files-blobs-staging` を流してから
+# database_id を埋め、`wrangler deploy --env staging` する。
+# Secrets は上記コメントの通り `--env staging` を付けて push する。
+[env.staging]
+name = "ref-files-worker-staging"
+workers_dev = true
+
+[[env.staging.routes]]
+pattern = "ref-files-staging.ippoan.org"
+custom_domain = true
+
+[env.staging.vars]
+WORKER_ENV = "staging"
+AUTH_WORKER_ORIGIN = "https://auth-staging.ippoan.org"
+MCP_JWT_AUDIENCE = "https://ref-files-staging.ippoan.org"
+
+[env.staging.observability]
+enabled = true
+head_sampling_rate = 1
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "ref_files_staging"
+database_id = "REPLACE_ME_AFTER_wrangler_d1_create_env_staging"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "BLOBS"
+bucket_name = "ref-files-blobs-staging"
