@@ -46,6 +46,29 @@ function constantTimeEquals(a: string, b: string): boolean {
   return diff === 0;
 }
 
+/**
+ * Normalise either binding shape to a plain string for comparison.
+ *
+ * - Worker secret / vitest binding → already a string, return it.
+ * - Secrets Store binding (`SecretsStoreSecret`) → call `.get()` and unwrap.
+ * - Missing or unreadable → `null` so the caller can return 503.
+ *
+ * The dual-mode lets `wrangler secret put` deployments keep working while
+ * we migrate to the shared account-level Secrets Store entry that
+ * auth-worker also points at. Once both workers are on Secrets Store the
+ * `string` branch becomes dead code and can be deleted.
+ */
+async function resolveInternalSharedSecret(env: Env): Promise<string | null> {
+  const binding = env.INTERNAL_SHARED_SECRET;
+  if (!binding) return null;
+  if (typeof binding === "string") return binding;
+  try {
+    return await binding.get();
+  } catch {
+    return null;
+  }
+}
+
 function activeFromClaims(claims: McpJwtClaims) {
   return {
     active: true as const,
@@ -96,7 +119,8 @@ export async function handleMcpIntrospect(
   request: Request,
   env: Env,
 ): Promise<Response> {
-  if (!env.INTERNAL_SHARED_SECRET) {
+  const sharedSecret = await resolveInternalSharedSecret(env);
+  if (!sharedSecret) {
     return jsonNoStore({ active: false, error: "server_error" }, 503);
   }
   if (env.WORKER_ENV !== "test" && !env.MCP_JWT_SECRET) {
@@ -116,7 +140,7 @@ export async function handleMcpIntrospect(
   }
 
   // Mode 2 — raw INTERNAL_SHARED_SECRET + body { token }.
-  if (!authz || !constantTimeEquals(authz, env.INTERNAL_SHARED_SECRET)) {
+  if (!authz || !constantTimeEquals(authz, sharedSecret)) {
     return jsonNoStore({ error: "unauthorized" }, 401);
   }
 

@@ -14,10 +14,18 @@ export interface Env {
   /**
    * Raw shared secret used by `POST /mcp/introspect` to authenticate the
    * legacy `ref-files-mcp-server-rs` binary path (mode 2). Must equal the
-   * `INTERNAL_SHARED_SECRET` registered in `auth-worker` for the same env so
-   * the binary can introspect against either worker with one embedded value.
+   * `INTERNAL_SHARED_SECRET` bound on `auth-worker` for the same env so
+   * the binary can introspect against either worker with one value.
+   *
+   * Two binding shapes are tolerated so the same code path works through
+   * a migration to Cloudflare Secrets Store:
+   *   - `string`     — legacy `wrangler secret put` (and vitest bindings).
+   *   - `SecretsStoreSecret` — account-level Secrets Store binding via
+   *                  `[[secrets_store_secrets]]`. Read with `await .get()`.
+   * Use `resolveInternalSharedSecret(env)` (in handlers/mcp-introspect.ts)
+   * to normalise both into `string | null` before comparing.
    */
-  INTERNAL_SHARED_SECRET?: string;
+  INTERNAL_SHARED_SECRET?: string | SecretsStoreSecret;
   WORKER_ENV: string;
 }
 

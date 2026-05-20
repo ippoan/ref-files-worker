@@ -29,16 +29,27 @@ migrations_dir = "migrations"
 binding = "BLOBS"
 bucket_name = "ref-files-blobs"
 
-# JWT 検証鍵などは secret で渡す (prod / staging とも同名):
-#   wrangler secret put MCP_JWT_SECRET                        # prod
-#   wrangler secret put MCP_JWT_SECRET         --env staging
-#   wrangler secret put INTERNAL_SHARED_SECRET                # prod
-#   wrangler secret put INTERNAL_SHARED_SECRET --env staging  # auth-worker と同値
+# ─── INTERNAL_SHARED_SECRET (Secrets Store binding) ─────────────────────────
+# `auth-worker` と同じ account-level Secrets Store entry を bind し、両 worker
+# が物理的に同一の値を見る。issue #4 の「同期する」概念をなくすための切替。
 #
-# auth-worker (src/lib/mcp-jwt.ts) と同じ HS256 secret を共有する。
-# INTERNAL_SHARED_SECRET は `POST /mcp/introspect` の mode 2 (raw shared
-# secret) で `ref-files-mcp-server-rs` binary を認証する用。auth-worker の
-# 同名 secret と必ず同値にすること (binary は両 worker を同じ値で叩く)。
+# 1 回だけ admin が実行する:
+#   wrangler secrets-store store create ippoan-mcp --remote
+#   wrangler secrets-store secret create <store-id> \
+#       --name mcp-internal-shared-secret-prod    --scopes workers --remote
+#   wrangler secrets-store secret create <store-id> \
+#       --name mcp-internal-shared-secret-staging --scopes workers --remote
+# その後、auth-worker / ref-files-worker の wrangler.toml の store_id を埋め、
+# `wrangler deploy` / `wrangler deploy --env staging` する。
+[[secrets_store_secrets]]
+binding = "INTERNAL_SHARED_SECRET"
+store_id = "REPLACE_ME_AFTER_secrets_store_create"
+secret_name = "mcp-internal-shared-secret-prod"
+
+# MCP_JWT_SECRET は引き続き Worker secret (HS256 鍵そのものは auth-worker と
+# 1:1、Secrets Store に出すほど widely 共有する性質ではないため):
+#   wrangler secret put MCP_JWT_SECRET                # prod
+#   wrangler secret put MCP_JWT_SECRET --env staging
 
 # ─── Staging ────────────────────────────────────────────────────────────────
 # `wrangler d1 create ref_files_staging` と
@@ -71,3 +82,8 @@ migrations_dir = "migrations"
 [[env.staging.r2_buckets]]
 binding = "BLOBS"
 bucket_name = "ref-files-blobs-staging"
+
+[[env.staging.secrets_store_secrets]]
+binding = "INTERNAL_SHARED_SECRET"
+store_id = "REPLACE_ME_AFTER_secrets_store_create"
+secret_name = "mcp-internal-shared-secret-staging"
