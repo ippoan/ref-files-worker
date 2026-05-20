@@ -43,7 +43,7 @@ bucket_name = "ref-files-blobs"
 # `wrangler deploy` / `wrangler deploy --env staging` する。
 [[secrets_store_secrets]]
 binding = "INTERNAL_SHARED_SECRET"
-store_id = "REPLACE_ME_AFTER_secrets_store_create"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "mcp-internal-shared-secret-prod"
 
 # MCP_JWT_SECRET は引き続き Worker secret (HS256 鍵そのものは auth-worker と
@@ -85,5 +85,5 @@ bucket_name = "ref-files-blobs-staging"
 
 [[env.staging.secrets_store_secrets]]
 binding = "INTERNAL_SHARED_SECRET"
-store_id = "REPLACE_ME_AFTER_secrets_store_create"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "mcp-internal-shared-secret-staging"
