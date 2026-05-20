@@ -29,6 +29,7 @@ export default defineWorkersConfig({
             WORKER_ENV: "test",
             AUTH_WORKER_ORIGIN: "https://auth.test.invalid",
             MCP_JWT_AUDIENCE: "https://ref-files.test.invalid",
+            INTERNAL_SHARED_SECRET: "test-internal-shared-secret",
           },
         },
       },

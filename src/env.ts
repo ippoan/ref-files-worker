@@ -11,6 +11,13 @@ export interface Env {
   MCP_JWT_AUDIENCE: string;
   /** HS256 secret shared with auth-worker. Optional in Phase 0 (auth is stubbed). */
   MCP_JWT_SECRET?: string;
+  /**
+   * Raw shared secret used by `POST /mcp/introspect` to authenticate the
+   * legacy `ref-files-mcp-server-rs` binary path (mode 2). Must equal the
+   * `INTERNAL_SHARED_SECRET` registered in `auth-worker` for the same env so
+   * the binary can introspect against either worker with one embedded value.
+   */
+  INTERNAL_SHARED_SECRET?: string;
   WORKER_ENV: string;
 }
 
