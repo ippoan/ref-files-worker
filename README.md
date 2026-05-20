@@ -99,6 +99,33 @@ miniflare D1 + R2.
 
 `/health` is unauthenticated and returns `{ ok, env, version }`.
 
+### `POST /mcp/introspect`
+
+RFC 7662 token introspection used by `ref-files-mcp-server-rs` on startup
+to confirm its embedded MCP JWT before switching into relay mode. Two
+auth modes are accepted; the first to satisfy wins:
+
+| Mode | Header | Body | Notes |
+|------|--------|------|-------|
+| Bearer JWT | `Authorization: Bearer <MCP_JWT>` | _(ignored)_ | Preferred. The bearer is verified and becomes the introspect subject. |
+| Shared secret | `Authorization: <INTERNAL_SHARED_SECRET>` (raw, no `Bearer` prefix) | `{ "token": "<MCP_JWT>" }` | Legacy path for the existing Rust binary. |
+
+`INTERNAL_SHARED_SECRET` is a Cloudflare Worker secret that **must equal
+the same value bound on `auth-worker` for the same environment** so the
+binary can introspect against either worker with a single embedded value.
+
+```bash
+# Per env, after `wrangler d1 create ref_files` and the [env.staging] block exists:
+wrangler secret put INTERNAL_SHARED_SECRET --env staging
+wrangler secret put MCP_JWT_SECRET         --env staging
+```
+
+Successful responses follow auth-worker's shape minus `github_token`
+(ref-files stores nothing in GitHub):
+`{ active, scope, sub, github_login, aud, exp }`. Invalid or expired
+tokens get `{ active: false }` per RFC 7662 §2.2. Missing env returns
+503 `{ active: false, error: "server_error" }`.
+
 ### Error wire shape
 
 Non-2xx responses are `{ "error": <code>, "reason"?: <detail> }`. Codes used:
@@ -120,13 +147,14 @@ bindings the deployed worker uses, so the route handlers exercise the same
 
 ```bash
 $ npm test
- ✓ test/auth.test.ts    (8)
- ✓ test/repos.test.ts   (4)
- ✓ test/folders.test.ts (4)
- ✓ test/files.test.ts   (8)
+ ✓ test/auth.test.ts       (8)
+ ✓ test/introspect.test.ts (9)
+ ✓ test/repos.test.ts      (4)
+ ✓ test/folders.test.ts    (4)
+ ✓ test/files.test.ts      (8)
 
- Test Files  4 passed (4)
-      Tests  24 passed (24)
+ Test Files  5 passed (5)
+      Tests  33 passed (33)
 ```
 
 `test/helpers.ts::applyMigrations` replays `migrations/0001_init.sql` into

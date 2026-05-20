@@ -29,8 +29,61 @@ migrations_dir = "migrations"
 binding = "BLOBS"
 bucket_name = "ref-files-blobs"
 
-# JWT 検証鍵などは secret で渡す:
-#   wrangler secret put MCP_JWT_SECRET
+# ─── INTERNAL_SHARED_SECRET (Secrets Store binding) ─────────────────────────
+# `auth-worker` と同じ account-level Secrets Store entry を bind し、両 worker
+# が物理的に同一の値を見る。issue #4 の「同期する」概念をなくすための切替。
 #
-# auth-worker (src/lib/mcp-jwt.ts) と同じ HS256 secret を共有する。
-# Phase 1 で署名鍵ローテーションが入る場合は JWKS endpoint からの fetch に切替予定。
+# 1 回だけ admin が実行する:
+#   wrangler secrets-store store create ippoan-mcp --remote
+#   wrangler secrets-store secret create <store-id> \
+#       --name mcp-internal-shared-secret-prod    --scopes workers --remote
+#   wrangler secrets-store secret create <store-id> \
+#       --name mcp-internal-shared-secret-staging --scopes workers --remote
+# その後、auth-worker / ref-files-worker の wrangler.toml の store_id を埋め、
+# `wrangler deploy` / `wrangler deploy --env staging` する。
+[[secrets_store_secrets]]
+binding = "INTERNAL_SHARED_SECRET"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "mcp-internal-shared-secret-prod"
+
+# MCP_JWT_SECRET は引き続き Worker secret (HS256 鍵そのものは auth-worker と
+# 1:1、Secrets Store に出すほど widely 共有する性質ではないため):
+#   wrangler secret put MCP_JWT_SECRET                # prod
+#   wrangler secret put MCP_JWT_SECRET --env staging
+
+# ─── Staging ────────────────────────────────────────────────────────────────
+# `wrangler d1 create ref_files_staging` と
+# `wrangler r2 bucket create ref-files-blobs-staging` を流してから
+# database_id を埋め、`wrangler deploy --env staging` する。
+# Secrets は上記コメントの通り `--env staging` を付けて push する。
+[env.staging]
+name = "ref-files-worker-staging"
+workers_dev = true
+
+[[env.staging.routes]]
+pattern = "ref-files-staging.ippoan.org"
+custom_domain = true
+
+[env.staging.vars]
+WORKER_ENV = "staging"
+AUTH_WORKER_ORIGIN = "https://auth-staging.ippoan.org"
+MCP_JWT_AUDIENCE = "https://ref-files-staging.ippoan.org"
+
+[env.staging.observability]
+enabled = true
+head_sampling_rate = 1
+
+[[env.staging.d1_databases]]
+binding = "DB"
+database_name = "ref_files_staging"
+database_id = "REPLACE_ME_AFTER_wrangler_d1_create_env_staging"
+migrations_dir = "migrations"
+
+[[env.staging.r2_buckets]]
+binding = "BLOBS"
+bucket_name = "ref-files-blobs-staging"
+
+[[env.staging.secrets_store_secrets]]
+binding = "INTERNAL_SHARED_SECRET"
+store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
+secret_name = "mcp-internal-shared-secret-staging"

@@ -11,6 +11,7 @@
 import { Hono } from "hono";
 
 import type { AppEnv } from "./env";
+import { handleMcpIntrospect } from "./handlers/mcp-introspect";
 import { mcpAuth } from "./middleware/auth";
 import { files } from "./routes/files";
 import { folders } from "./routes/folders";
@@ -22,6 +23,10 @@ const app = new Hono<AppEnv>();
 app.get("/health", (c) =>
   c.json({ ok: true, env: c.env.WORKER_ENV, version: "0.1.0-phase0" }),
 );
+
+// RFC 7662 introspection — has its own auth (Bearer JWT or raw shared
+// secret), so it lives outside the `/v1/*` JWT middleware.
+app.post("/mcp/introspect", (c) => handleMcpIntrospect(c.req.raw, c.env));
 
 // JWT-required surface.
 app.use("/v1/*", mcpAuth);
