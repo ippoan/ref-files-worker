@@ -1,8 +1,7 @@
 name: CI
 
-# Reuses ci-workflows/frontend-ci.yml with project_type=worker (typecheck via
-# `tsc --noEmit`, deploy via `wrangler deploy`). Same pattern other ippoan
-# worker repos (e.g. auth-worker) use.
+# auth-worker / 他 worker repo と同じ frontend-ci.yml caller pattern。
+# PR で staging deploy、tag push で prod deploy が走る。
 
 on:
   push:
@@ -11,19 +10,25 @@ on:
   pull_request:
     branches: [main]
 
+# frontend-ci.yml は内蔵 auto-merge / secret-verify を持つため
+# top-level で contents:write + pull-requests:write + id-token:write が必須
+# (ci-workflows/CLAUDE.md "Option A" 参照)。`id-token:write` が無いと
+# secret-verify を使わない caller でも parse 時 check で startup_failure する。
 permissions:
   contents: write
   pull-requests: write
   packages: read
+  id-token: write
 
 jobs:
   ci:
     uses: ippoan/ci-workflows/.github/workflows/frontend-ci.yml@main
     with:
       project_type: worker
-      # Phase 1 lands vitest-pool-workers — enable the Vitest + Coverage gate.
+      install_command: 'npm install'
+      typecheck_command: 'npx tsc --noEmit'
       has_tests: true
-      # No staging d1/r2 provisioned yet — skip deploy until `wrangler d1
-      # create ref_files` and `wrangler.toml [env.staging]` land (Phase 2).
-      has_deploy: false
+      post_install_script: 'npx wrangler types'
+      deploy_staging_script: 'npx wrangler deploy --env staging'
+      deploy_release_script: 'npx wrangler deploy'
     secrets: inherit
