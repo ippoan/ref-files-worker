@@ -16,12 +16,16 @@ MCP_JWT_AUDIENCE = "https://ref-files.ippoan.org"
 enabled = true
 head_sampling_rate = 1
 
+# Custom domain (prod). `wrangler deploy` で DNS record + route が自動生成される。
+[[routes]]
+pattern = "ref-files.ippoan.org"
+custom_domain = true
+
 # D1: メタデータ (repos / folders / files / revisions)。
-# `id` の値は Phase 1 で `wrangler d1 create ref_files` してから埋める。
 [[d1_databases]]
 binding = "DB"
 database_name = "ref_files"
-database_id = "REPLACE_ME_AFTER_wrangler_d1_create"
+database_id = "bae2cf6d-3f5c-4c1a-8c58-34ac312107c1"
 migrations_dir = "migrations"
 
 # R2: ファイル本体。Key 形式は `files/{repo_id}/{file_id}/{rev_number}`。
@@ -76,7 +80,7 @@ head_sampling_rate = 1
 [[env.staging.d1_databases]]
 binding = "DB"
 database_name = "ref_files_staging"
-database_id = "REPLACE_ME_AFTER_wrangler_d1_create_env_staging"
+database_id = "cbf0c391-2d80-44cc-8e3e-fd62d539f567"
 migrations_dir = "migrations"
 
 [[env.staging.r2_buckets]]
