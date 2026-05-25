@@ -29,6 +29,8 @@ jobs:
       typecheck_command: 'npx tsc --noEmit'
       has_tests: true
       post_install_script: 'npx wrangler types'
-      deploy_staging_script: 'npx wrangler deploy --env staging'
+      # Single-env 運用 (Refs #6) — staging URL は廃止し ref-files.ippoan.org
+      # 1 本立て。PR merge / tag push どちらも同じ `wrangler deploy` を走らせる。
+      deploy_staging_script: 'npx wrangler deploy'
       deploy_release_script: 'npx wrangler deploy'
     secrets: inherit

@@ -9,6 +9,7 @@
  */
 import type { MiddlewareHandler } from "hono";
 import type { AppEnv } from "../env";
+import { resolveMcpJwtSecret } from "../handlers/mcp-introspect";
 import { JwtVerifyError, verifyMcpJwt } from "../lib/jwt";
 
 export const mcpAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
@@ -17,7 +18,7 @@ export const mcpAuth: MiddlewareHandler<AppEnv> = async (c, next) => {
     return c.json({ error: "unauthorized", reason: "missing_bearer" }, 401);
   }
   const token = header.slice(7);
-  const secret = c.env.MCP_JWT_SECRET;
+  const secret = await resolveMcpJwtSecret(c.env);
   const isTestEnv = c.env.WORKER_ENV === "test";
 
   if (!secret) {
