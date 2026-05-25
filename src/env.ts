@@ -9,21 +9,28 @@ export interface Env {
   BLOBS: R2Bucket;
   AUTH_WORKER_ORIGIN: string;
   MCP_JWT_AUDIENCE: string;
-  /** HS256 secret shared with auth-worker. Optional in Phase 0 (auth is stubbed). */
-  MCP_JWT_SECRET?: string;
+  /**
+   * HS256 secret shared with auth-worker.
+   *
+   * Two binding shapes are tolerated:
+   *   - `string`            — `wrangler secret put` / vitest 用 plain binding。
+   *   - `SecretsStoreSecret` — account-level Secrets Store binding (prod).
+   *                          `secret_name = "INTERNAL_SHARED_SECRET"` を
+   *                          auth-worker と共有する設計 (Refs #6)。
+   * Optional のままにしておくのは `WORKER_ENV === "test"` モードで未 bind
+   * を許す経路 (`src/middleware/auth.ts` test branch) があるため。
+   * 値の取り出しは `resolveMcpJwtSecret(env)` (handlers/mcp-introspect.ts)
+   * で `string | null` に正規化する。
+   */
+  MCP_JWT_SECRET?: string | SecretsStoreSecret;
   /**
    * Raw shared secret used by `POST /mcp/introspect` to authenticate the
    * legacy `ref-files-mcp-server-rs` binary path (mode 2). Must equal the
    * `INTERNAL_SHARED_SECRET` bound on `auth-worker` for the same env so
    * the binary can introspect against either worker with one value.
    *
-   * Two binding shapes are tolerated so the same code path works through
-   * a migration to Cloudflare Secrets Store:
-   *   - `string`     — legacy `wrangler secret put` (and vitest bindings).
-   *   - `SecretsStoreSecret` — account-level Secrets Store binding via
-   *                  `[[secrets_store_secrets]]`. Read with `await .get()`.
-   * Use `resolveInternalSharedSecret(env)` (in handlers/mcp-introspect.ts)
-   * to normalise both into `string | null` before comparing.
+   * Same dual binding shape as `MCP_JWT_SECRET`. Use
+   * `resolveInternalSharedSecret(env)` to normalise.
    */
   INTERNAL_SHARED_SECRET?: string | SecretsStoreSecret;
   WORKER_ENV: string;

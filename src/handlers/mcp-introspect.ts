@@ -53,13 +53,12 @@ function constantTimeEquals(a: string, b: string): boolean {
  * - Secrets Store binding (`SecretsStoreSecret`) → call `.get()` and unwrap.
  * - Missing or unreadable → `null` so the caller can return 503.
  *
- * The dual-mode lets `wrangler secret put` deployments keep working while
- * we migrate to the shared account-level Secrets Store entry that
- * auth-worker also points at. Once both workers are on Secrets Store the
- * `string` branch becomes dead code and can be deleted.
+ * The dual-mode keeps vitest fixtures (which bind plain strings via
+ * `WorkerEntrypoint`) compatible with prod Secrets Store bindings.
  */
-async function resolveInternalSharedSecret(env: Env): Promise<string | null> {
-  const binding = env.INTERNAL_SHARED_SECRET;
+async function resolveBinding(
+  binding: string | SecretsStoreSecret | undefined,
+): Promise<string | null> {
   if (!binding) return null;
   if (typeof binding === "string") return binding;
   try {
@@ -67,6 +66,14 @@ async function resolveInternalSharedSecret(env: Env): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export function resolveInternalSharedSecret(env: Env): Promise<string | null> {
+  return resolveBinding(env.INTERNAL_SHARED_SECRET);
+}
+
+export function resolveMcpJwtSecret(env: Env): Promise<string | null> {
+  return resolveBinding(env.MCP_JWT_SECRET);
 }
 
 function activeFromClaims(claims: McpJwtClaims) {
@@ -87,7 +94,8 @@ function activeFromClaims(claims: McpJwtClaims) {
  * so vitest fixtures stay cheap. Staging / prod always go through HS256.
  */
 async function resolveClaims(token: string, env: Env): Promise<McpJwtClaims | null> {
-  if (env.WORKER_ENV === "test" && !env.MCP_JWT_SECRET) {
+  const jwtSecret = await resolveMcpJwtSecret(env);
+  if (env.WORKER_ENV === "test" && !jwtSecret) {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
     try {
@@ -107,9 +115,9 @@ async function resolveClaims(token: string, env: Env): Promise<McpJwtClaims | nu
       return null;
     }
   }
-  if (!env.MCP_JWT_SECRET) return null;
+  if (!jwtSecret) return null;
   try {
-    return await verifyMcpJwt(token, env.MCP_JWT_SECRET, env.MCP_JWT_AUDIENCE);
+    return await verifyMcpJwt(token, jwtSecret, env.MCP_JWT_AUDIENCE);
   } catch {
     return null;
   }
@@ -123,7 +131,8 @@ export async function handleMcpIntrospect(
   if (!sharedSecret) {
     return jsonNoStore({ active: false, error: "server_error" }, 503);
   }
-  if (env.WORKER_ENV !== "test" && !env.MCP_JWT_SECRET) {
+  const jwtSecret = await resolveMcpJwtSecret(env);
+  if (env.WORKER_ENV !== "test" && !jwtSecret) {
     return jsonNoStore({ active: false, error: "server_error" }, 503);
   }
 
