@@ -81,3 +81,92 @@ describe("repo_init", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("repos_list", () => {
+  it("returns only repos owned by the authenticated user", async () => {
+    // alice has 2 repos, bob has 1.
+    const h1 = authHeader({ github_login: "rl-alice" });
+    const h2 = authHeader({ github_login: "rl-bob" });
+    for (const name of ["one", "two"]) {
+      await worker.fetch(
+        new Request("https://x/v1/repos", { method: "POST", headers: h1, body: JSON.stringify({ name }) }),
+        env,
+        ctx,
+      );
+    }
+    await worker.fetch(
+      new Request("https://x/v1/repos", { method: "POST", headers: h2, body: JSON.stringify({ name: "carol" }) }),
+      env,
+      ctx,
+    );
+
+    const res = await worker.fetch(
+      new Request("https://x/v1/repos", { headers: h1 }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { repos: { id: string; owner_login: string; name: string }[] };
+    const names = body.repos.map((r) => r.name).sort();
+    expect(names).toEqual(["one", "two"]);
+    for (const r of body.repos) {
+      expect(r.owner_login).toBe("rl-alice");
+      expect(r.id).toMatch(/^[0-9a-f-]{36}$/);
+    }
+  });
+
+  it("returns an empty list for a user with no repos", async () => {
+    const res = await worker.fetch(
+      new Request("https://x/v1/repos", { headers: authHeader({ github_login: "rl-nobody" }) }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ repos: [] });
+  });
+});
+
+describe("ensureRepoOwned hint on name-shaped repo_id", () => {
+  it("attaches { hint: { resolved_id, name } } when caller passed a name instead of the UUID", async () => {
+    const headers = authHeader({ github_login: "hint-alice" });
+    const init = await worker.fetch(
+      new Request("https://x/v1/repos", { method: "POST", headers, body: JSON.stringify({ name: "skills" }) }),
+      env,
+      ctx,
+    );
+    const { id: realId } = (await init.json()) as { id: string };
+
+    // Pass the name as repo_id — this is the footgun we want to catch.
+    const res = await worker.fetch(
+      new Request("https://x/v1/folders?repo_id=skills", { headers }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string; reason?: string; hint?: { resolved_id: string; name: string } };
+    expect(body.error).toBe("not_found");
+    expect(body.reason).toBe("repo");
+    expect(body.hint).toEqual({ resolved_id: realId, name: "skills" });
+  });
+
+  it("does NOT leak hints across owners", async () => {
+    const ownerHeaders = authHeader({ github_login: "hint-owner" });
+    await worker.fetch(
+      new Request("https://x/v1/repos", { method: "POST", headers: ownerHeaders, body: JSON.stringify({ name: "private" }) }),
+      env,
+      ctx,
+    );
+    // A different user probes the same name — must not get a hint back.
+    const res = await worker.fetch(
+      new Request("https://x/v1/folders?repo_id=private", {
+        headers: authHeader({ github_login: "hint-snooper" }),
+      }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { error: string; hint?: unknown };
+    expect(body.error).toBe("not_found");
+    expect(body.hint).toBeUndefined();
+  });
+});

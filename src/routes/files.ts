@@ -150,7 +150,7 @@ files.post("/", async (c) => {
   const auth = c.get("auth");
   const handle = db(c.env);
   const repo = await ensureRepoOwned(handle, body.repo_id, auth.github_login);
-  if ("error" in repo) return c.json({ error: repo.error }, repo.error === "forbidden" ? 403 : 404);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
 
   const { parent: parentPath } = splitParent(path);
   const folder = await ensureFolderPath(handle, body.repo_id, parentPath);
@@ -277,7 +277,7 @@ files.get("/", async (c) => {
 
   const handle = db(c.env);
   const repo = await ensureRepoOwned(handle, repoId, c.get("auth").github_login);
-  if ("error" in repo) return c.json({ error: repo.error }, repo.error === "forbidden" ? 403 : 404);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
 
   const file = await loadFileByPath(handle, repoId, path, true);
   if (!file) return c.json({ error: "not_found", reason: "file" }, 404);
@@ -328,7 +328,7 @@ files.delete("/", async (c) => {
   }
   const handle = db(c.env);
   const repo = await ensureRepoOwned(handle, repoId, c.get("auth").github_login);
-  if ("error" in repo) return c.json({ error: repo.error }, repo.error === "forbidden" ? 403 : 404);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
 
   const file = await loadFileByPath(handle, repoId, path, false);
   if (!file) return c.json({ error: "not_found", reason: "file" }, 404);
@@ -355,7 +355,7 @@ files.get("/history", async (c) => {
   }
   const handle = db(c.env);
   const repo = await ensureRepoOwned(handle, repoId, c.get("auth").github_login);
-  if ("error" in repo) return c.json({ error: repo.error }, repo.error === "forbidden" ? 403 : 404);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
 
   const file = await loadFileByPath(handle, repoId, path, true);
   if (!file) return c.json({ error: "not_found", reason: "file" }, 404);
@@ -408,7 +408,7 @@ files.post("/move", async (c) => {
 
   const handle = db(c.env);
   const repo = await ensureRepoOwned(handle, body.repo_id, c.get("auth").github_login);
-  if ("error" in repo) return c.json({ error: repo.error }, repo.error === "forbidden" ? 403 : 404);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
 
   const file = await loadFileByPath(handle, body.repo_id, fromPath, false);
   if (!file) return c.json({ error: "not_found", reason: "file" }, 404);
@@ -468,7 +468,7 @@ files.get("/search", async (c) => {
 
   const handle = db(c.env);
   const repo = await ensureRepoOwned(handle, repoId, c.get("auth").github_login);
-  if ("error" in repo) return c.json({ error: repo.error }, repo.error === "forbidden" ? 403 : 404);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
 
   const likeNeedle = `%${escapeLike(query)}%`;
   const conditions = [
