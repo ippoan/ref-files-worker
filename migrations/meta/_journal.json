@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1779690013024,
+      "tag": "0002_pending_uploads",
+      "breakpoints": true
+    }
+  ]
+}

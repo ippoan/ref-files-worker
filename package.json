@@ -12,7 +12,9 @@
     "typecheck": "tsc --noEmit",
     "d1:migrate:local": "wrangler d1 migrations apply ref_files --local",
     "d1:migrate:prod": "wrangler d1 migrations apply ref_files --remote",
-    "drizzle:generate": "drizzle-kit generate"
+    "drizzle:generate": "drizzle-kit generate",
+    "drizzle:check": "drizzle-kit check",
+    "drizzle:drift": "drizzle-kit generate && git diff --exit-code -- migrations/ > /dev/null || (echo 'schema.ts drifted from migrations/. Run npm run drizzle:generate and commit the result.' && exit 1)"
   },
   "dependencies": {
     "drizzle-orm": "^0.36.0",
