@@ -16,6 +16,7 @@ import { mcpAuth } from "./middleware/auth";
 import { files } from "./routes/files";
 import { folders } from "./routes/folders";
 import { repos } from "./routes/repos";
+import { uploads } from "./routes/uploads";
 
 const app = new Hono<AppEnv>();
 
@@ -27,6 +28,11 @@ app.get("/health", (c) =>
 // RFC 7662 introspection — has its own auth (Bearer JWT or raw shared
 // secret), so it lives outside the `/v1/*` JWT middleware.
 app.post("/mcp/introspect", (c) => handleMcpIntrospect(c.req.raw, c.env));
+
+// Pre-signed upload / download — the path-bound token IS the credential,
+// no JWT. Mounted at root before `/v1/*` so the JWT middleware doesn't fire
+// for `/upload/:token` and `/download/:token`.
+app.route("/", uploads);
 
 // JWT-required surface.
 app.use("/v1/*", mcpAuth);

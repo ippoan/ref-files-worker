@@ -93,3 +93,34 @@ export type Repo = typeof repos.$inferSelect;
 export type Folder = typeof folders.$inferSelect;
 export type FileRow = typeof files.$inferSelect;
 export type Revision = typeof revisions.$inferSelect;
+
+/**
+ * Pre-signed upload / download token tracking. Mirrors
+ * `migrations/0002_pending_uploads.sql`.
+ *
+ * One row per outstanding `upload_url` / `download_url`. Issued by the
+ * JWT-protected `*-init` endpoints, consumed by the JWT-less
+ * `PUT /upload/:token` / `GET /download/:token`. `consumed_at` flips on
+ * success so replays return 409 instead of duplicating revisions.
+ */
+export const pendingUploads = sqliteTable(
+  "pending_uploads",
+  {
+    token: text("token").primaryKey().notNull(),
+    kind: text("kind").notNull(),
+    repoId: text("repo_id").notNull(),
+    path: text("path").notNull(),
+    mime: text("mime"),
+    message: text("message"),
+    revision: integer("revision"),
+    ownerLogin: text("owner_login").notNull(),
+    createdAt: text("created_at").notNull(),
+    expiresAt: text("expires_at").notNull(),
+    consumedAt: text("consumed_at"),
+  },
+  (t) => ({
+    expiryIdx: index("idx_pending_uploads_expiry").on(t.expiresAt),
+  }),
+);
+
+export type PendingUpload = typeof pendingUploads.$inferSelect;

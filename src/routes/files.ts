@@ -19,6 +19,7 @@ import {
 import { decodeBase64, encodeBase64, sha256Hex } from "../lib/hash";
 import { escapeLike, normalizePath, PathError, splitParent } from "../lib/path";
 import { ensureFolderPath, ensureRepoOwned } from "../lib/repo-ops";
+import { buildDownloadUrl, buildUploadUrl, issueToken } from "../lib/upload-token";
 import type { File as FileDto } from "../types/File";
 import type { FileGetResponse } from "../types/FileGetResponse";
 import type { FileMoveArgs } from "../types/FileMoveArgs";
@@ -44,7 +45,7 @@ export interface FileRow {
   deletedAt: string | null;
 }
 
-interface RevisionRow {
+export interface RevisionRow {
   id: string;
   fileId: string;
   revNumber: number;
@@ -80,7 +81,7 @@ export function fileRowToDto(r: FileRow): FileDto {
   };
 }
 
-function revRowToDto(r: RevisionRow): RevisionDto {
+export function revRowToDto(r: RevisionRow): RevisionDto {
   return {
     id: r.id,
     file_id: r.fileId,
@@ -490,4 +491,178 @@ files.get("/search", async (c) => {
 
   const body: FileSearchResult = { files: rows.map(fileRowToDto) };
   return c.json(body, 200);
+});
+
+/* ──────────────────────────────────────────────────────────────────────── */
+/* Pre-signed URL flow                                                       */
+/*                                                                           */
+/* `*-init` endpoints issue a token row in `pending_uploads` and return an   */
+/* absolute URL for the JWT-less `PUT /upload/:token` / `GET /download/:token` */
+/* handlers in `src/routes/uploads.ts`. Single-file + tar.gz bulk are the    */
+/* two upload kinds; downloads stream the matching R2 blob directly.        */
+/* ──────────────────────────────────────────────────────────────────────── */
+
+function originOf(reqUrl: string): string {
+  try {
+    return new URL(reqUrl).origin;
+  } catch {
+    return "";
+  }
+}
+
+interface UploadInitArgs {
+  repo_id: string;
+  path: string;
+  mime?: string | null;
+  message?: string | null;
+}
+
+// POST /v1/files/upload-init — issue a single-file upload URL
+files.post("/upload-init", async (c) => {
+  let body: UploadInitArgs;
+  try {
+    body = await c.req.json<UploadInitArgs>();
+  } catch {
+    return c.json({ error: "bad_request", reason: "json" }, 400);
+  }
+  if (!body || typeof body.repo_id !== "string" || typeof body.path !== "string") {
+    return c.json({ error: "bad_request", reason: "shape" }, 400);
+  }
+  let path: string;
+  try {
+    path = normalizePath(body.path);
+  } catch (err) {
+    return c.json({ error: "bad_request", reason: (err as PathError).reason ?? "path" }, 400);
+  }
+  if (path === "") return c.json({ error: "bad_request", reason: "root_file" }, 400);
+
+  const handle = db(c.env);
+  const auth = c.get("auth");
+  const repo = await ensureRepoOwned(handle, body.repo_id, auth.github_login);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
+
+  const issued = await issueToken(handle, {
+    kind: "single",
+    repoId: body.repo_id,
+    path,
+    mime: body.mime ?? null,
+    message: body.message ?? null,
+    ownerLogin: auth.github_login,
+  });
+  return c.json(
+    {
+      upload_url: buildUploadUrl(originOf(c.req.url), issued.token),
+      token: issued.token,
+      expires_at: issued.expiresAt,
+      method: "PUT",
+    },
+    201,
+  );
+});
+
+interface BulkInitArgs {
+  repo_id: string;
+  base_path?: string;
+  message?: string | null;
+}
+
+// POST /v1/files/bulk-upload-init — issue a tar.gz upload URL
+files.post("/bulk-upload-init", async (c) => {
+  let body: BulkInitArgs;
+  try {
+    body = await c.req.json<BulkInitArgs>();
+  } catch {
+    return c.json({ error: "bad_request", reason: "json" }, 400);
+  }
+  if (!body || typeof body.repo_id !== "string") {
+    return c.json({ error: "bad_request", reason: "shape" }, 400);
+  }
+  let basePath = "";
+  if (body.base_path !== undefined && body.base_path !== null) {
+    try {
+      basePath = normalizePath(body.base_path);
+    } catch (err) {
+      return c.json({ error: "bad_request", reason: (err as PathError).reason ?? "path" }, 400);
+    }
+  }
+
+  const handle = db(c.env);
+  const auth = c.get("auth");
+  const repo = await ensureRepoOwned(handle, body.repo_id, auth.github_login);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
+
+  const issued = await issueToken(handle, {
+    kind: "tar_gz",
+    repoId: body.repo_id,
+    path: basePath,
+    mime: null,
+    message: body.message ?? null,
+    ownerLogin: auth.github_login,
+  });
+  return c.json(
+    {
+      upload_url: buildUploadUrl(originOf(c.req.url), issued.token),
+      token: issued.token,
+      expires_at: issued.expiresAt,
+      method: "PUT",
+      content_type: "application/gzip",
+    },
+    201,
+  );
+});
+
+// GET /v1/files/download-url — issue a streaming download URL for one revision
+files.get("/download-url", async (c) => {
+  const repoId = c.req.query("repo_id");
+  const rawPath = c.req.query("path");
+  const revStr = c.req.query("revision");
+  if (!repoId || !rawPath) {
+    return c.json({ error: "bad_request", reason: "args" }, 400);
+  }
+  let path: string;
+  try {
+    path = normalizePath(rawPath);
+  } catch (err) {
+    return c.json({ error: "bad_request", reason: (err as PathError).reason ?? "path" }, 400);
+  }
+  let revision: number | null = null;
+  if (revStr !== undefined) {
+    const n = Number.parseInt(revStr, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      return c.json({ error: "bad_request", reason: "revision" }, 400);
+    }
+    revision = n;
+  }
+
+  const handle = db(c.env);
+  const auth = c.get("auth");
+  const repo = await ensureRepoOwned(handle, repoId, auth.github_login);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
+
+  // Verify the file actually exists before handing back a token — we want
+  // the JWT path to surface 404, not the JWT-less download endpoint.
+  const fileRows = (await handle
+    .select()
+    .from(filesTable)
+    .where(and(eq(filesTable.repoId, repoId), eq(filesTable.path, path)))
+    .limit(1)
+    .all()) as FileRow[];
+  if (!fileRows[0]) return c.json({ error: "not_found", reason: "file" }, 404);
+
+  const issued = await issueToken(handle, {
+    kind: "download",
+    repoId,
+    path,
+    revision,
+    ownerLogin: auth.github_login,
+  });
+  return c.json(
+    {
+      download_url: buildDownloadUrl(originOf(c.req.url), issued.token),
+      token: issued.token,
+      expires_at: issued.expiresAt,
+      method: "GET",
+    },
+    201,
+  );
 });
