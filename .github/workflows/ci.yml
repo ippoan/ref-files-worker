@@ -36,7 +36,8 @@ jobs:
       # に走らせる: schema 変更を含む deploy で migration が抜けると worker
       # が起動直後に `no such table` で落ちる (実害: PR #14 merge 後
       # `pending_uploads` 未 apply で /upload/:token が 500 を返した)。
-      # `--yes` は対話 confirm を skip、変更が無ければ no-op。
-      deploy_staging_script: 'npx wrangler d1 migrations apply ref_files --remote --yes && npx wrangler deploy'
-      deploy_release_script: 'npx wrangler d1 migrations apply ref_files --remote --yes && npx wrangler deploy'
+      # 対話 confirm は wrangler 側が CI 環境を検出して自動 skip する
+      # (`--yes` フラグは現行 wrangler で削除済み)。
+      deploy_staging_script: 'npx wrangler d1 migrations apply ref_files --remote && npx wrangler deploy'
+      deploy_release_script: 'npx wrangler d1 migrations apply ref_files --remote && npx wrangler deploy'
     secrets: inherit
