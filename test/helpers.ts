@@ -10,15 +10,15 @@
  *   check passes.
  */
 import { env } from "cloudflare:test";
-import migration from "../migrations/0001_init.sql?raw";
+import migration0001 from "../migrations/0001_init.sql?raw";
+import migration0002 from "../migrations/0002_pending_uploads.sql?raw";
 
 let applied = false;
 
-export async function applyMigrations() {
-  if (applied) return;
+async function execSqlBatch(sql: string): Promise<void> {
   // Strip line comments first so a comment block at the top of the file
   // doesn't poison the first split chunk (which contains CREATE TABLE).
-  const stripped = migration
+  const stripped = sql
     .split("\n")
     .filter((l: string) => !l.trim().startsWith("--"))
     .join("\n");
@@ -26,8 +26,16 @@ export async function applyMigrations() {
     .split(";")
     .map((s: string) => s.trim())
     .filter((s: string) => s.length > 0);
+  // Sequential — FOREIGN KEY parents must exist before children.
   for (const stmt of statements) {
     await (env as any).DB.prepare(stmt).run();
+  }
+}
+
+export async function applyMigrations() {
+  if (applied) return;
+  for (const sql of [migration0001, migration0002]) {
+    await execSqlBatch(sql);
   }
   applied = true;
 }

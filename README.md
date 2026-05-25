@@ -160,8 +160,54 @@ $ npm test
 `test/helpers.ts::applyMigrations` replays `migrations/0001_init.sql` into
 the per-suite D1 instance so each test file starts from a fresh schema.
 
+## Pre-signed upload / download (Phase 1.5)
+
+`file_put` and `file_get` pass file bytes through MCP as base64 strings,
+which doubles transport size and balloons the LLM context that brokers the
+call. For large single files (PDFs, archives) and bulk imports (a whole
+`spec/` tree as `tar.gz`) the worker also exposes a 2-step **pre-signed URL**
+flow that drops base64 entirely — the JWT path only issues a short-lived
+token, then the client streams bytes to / from a JWT-less endpoint.
+
+| Endpoint | Auth | Use |
+|----------|------|-----|
+| `POST /v1/files/upload-init` | JWT | Issue a single-file upload URL. Body: `{ repo_id, path, mime?, message? }` |
+| `POST /v1/files/bulk-upload-init` | JWT | Issue a tar.gz bulk upload URL. Body: `{ repo_id, base_path?, message? }` |
+| `GET /v1/files/download-url` | JWT | Issue a streaming download URL. Query: `repo_id`, `path`, `revision?` |
+| `PUT /upload/:token` | token | Consume an upload token; body is raw bytes (single) or `application/gzip` tar.gz (bulk) |
+| `GET /download/:token` | token | Stream the R2 blob; `Content-Disposition: attachment; filename*=...` + `X-Sha256` header |
+
+Tokens are 32-byte url-safe random strings stored in the
+`pending_uploads` table (`migrations/0002_pending_uploads.sql`) with the
+issuing JWT's `github_login`, target repo, and path. TTL defaults to 10
+minutes. Upload tokens are single-shot (`consumed_at` flips on success →
+replay returns 410); download tokens are reusable until expiry.
+
+### tar.gz format
+
+The bulk endpoint accepts an ustar archive piped through gzip (the output
+of `tar -czf`). Both ustar `prefix` continuation and GNU `'L'` long-name
+extensions are supported so non-ASCII paths (`spec/最終確認試験用デー
+タ情報.../...`) round-trip. Each regular file entry becomes a `file_put`
+under `<base_path>/<entry_name>` (the directory chain is auto-created via
+`mkdir -p`). Directory entries (`typeflag '5'`), symlinks, and pax
+extended headers are skipped.
+
+```bash
+# example: back up a local spec/ tree
+tar -czf spec.tar.gz spec/
+TOKEN=$(curl -s -X POST https://ref-files.ippoan.org/v1/files/bulk-upload-init \
+  -H "Authorization: Bearer $MCP_JWT" \
+  -H "Content-Type: application/json" \
+  -d "{\"repo_id\":\"$REPO_ID\",\"base_path\":\"\"}" | jq -r .token)
+curl -X PUT "https://ref-files.ippoan.org/upload/$TOKEN" \
+  -H "Content-Type: application/gzip" \
+  --data-binary @spec.tar.gz
+```
+
 ## Phase 2 (deferred)
 
 - `auth-worker` MCP JWT minting end-to-end (mirrors `auth-worker/src/lib/mcp-jwt.ts`).
 - `wrangler.toml [env.staging]` once `wrangler d1 create ref_files` runs.
 - Real-content full-text search on `revisions` (Phase 1 is SQL `LIKE` on path + name only).
+- New MCP tools (`create_upload_url`, `create_download_url`, `bulk_upload_init`) in `ref-files-mcp-server-rs` mapping 1:1 to the pre-signed endpoints above so LLM clients can issue tokens without dropping to curl.
