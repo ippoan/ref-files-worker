@@ -31,6 +31,12 @@ jobs:
       post_install_script: 'npx wrangler types'
       # Single-env 運用 (Refs #6) — staging URL は廃止し ref-files.ippoan.org
       # 1 本立て。PR merge / tag push どちらも同じ `wrangler deploy` を走らせる。
-      deploy_staging_script: 'npx wrangler deploy'
-      deploy_release_script: 'npx wrangler deploy'
+      #
+      # `wrangler d1 migrations apply ref_files --remote` を deploy の **前**
+      # に走らせる: schema 変更を含む deploy で migration が抜けると worker
+      # が起動直後に `no such table` で落ちる (実害: PR #14 merge 後
+      # `pending_uploads` 未 apply で /upload/:token が 500 を返した)。
+      # `--yes` は対話 confirm を skip、変更が無ければ no-op。
+      deploy_staging_script: 'npx wrangler d1 migrations apply ref_files --remote --yes && npx wrangler deploy'
+      deploy_release_script: 'npx wrangler d1 migrations apply ref_files --remote --yes && npx wrangler deploy'
     secrets: inherit
