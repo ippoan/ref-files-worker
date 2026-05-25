@@ -13,8 +13,22 @@ import { repos as reposTable } from "../db/schema";
 import { validRepoName } from "../lib/path";
 import type { RepoInitArgs } from "../types/RepoInitArgs";
 import type { Repo } from "../types/Repo";
+import type { RepoList } from "../types/RepoList";
 
 export const repos = new Hono<AppEnv>();
+
+// GET /v1/repos — repos_list (owned by the authenticated user only)
+repos.get("/", async (c) => {
+  const owner = c.get("auth").github_login;
+  const handle = db(c.env);
+  const rows = await handle
+    .select()
+    .from(reposTable)
+    .where(eq(reposTable.ownerLogin, owner))
+    .all();
+  const body: RepoList = { repos: rows.map(rowToRepo) };
+  return c.json(body, 200);
+});
 
 // POST /v1/repos — repo_init
 repos.post("/", async (c) => {

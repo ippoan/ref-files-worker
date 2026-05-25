@@ -46,7 +46,7 @@ folders.post("/", async (c) => {
 
   const handle = db(c.env);
   const repo = await ensureRepoOwned(handle, body.repo_id, c.get("auth").github_login);
-  if ("error" in repo) return c.json({ error: repo.error }, repo.error === "forbidden" ? 403 : 404);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
 
   const row = await ensureFolderPath(handle, body.repo_id, path);
   if (!row) return c.json({ error: "internal" }, 500);
@@ -69,7 +69,7 @@ folders.get("/", async (c) => {
 
   const handle = db(c.env);
   const repo = await ensureRepoOwned(handle, repoId, c.get("auth").github_login);
-  if ("error" in repo) return c.json({ error: repo.error }, repo.error === "forbidden" ? 403 : 404);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
 
   const baseFolder = path === "" ? null : await loadFolderByPath(handle, repoId, path);
   if (path !== "" && !baseFolder) {

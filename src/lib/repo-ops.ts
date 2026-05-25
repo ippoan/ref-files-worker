@@ -35,13 +35,62 @@ export async function loadRepo(handle: DB, repoId: string): Promise<RepoRow | nu
   return rows[0] ?? null;
 }
 
+/**
+ * Look up a repo owned by `ownerLogin` whose `name` equals `candidate`.
+ * Returns null when no match (or when `candidate` clearly isn't a name).
+ *
+ * Used to power the `hint` field of `ensureRepoOwned`'s not_found response —
+ * a common smoke-test footgun is to pass `repo_id: "claude-skills"` (the
+ * name) instead of the UUID. We probe the (owner, name) index and surface
+ * the resolved UUID so the caller can fix the call shape.
+ */
+export async function lookupRepoByName(
+  handle: DB,
+  ownerLogin: string,
+  candidate: string,
+): Promise<RepoRow | null> {
+  if (!candidate) return null;
+  const rows = await handle
+    .select()
+    .from(reposTable)
+    .where(and(eq(reposTable.ownerLogin, ownerLogin), eq(reposTable.name, candidate)))
+    .limit(1)
+    .all();
+  return (rows[0] as RepoRow | undefined) ?? null;
+}
+
+export interface RepoNotFound {
+  error: "not_found";
+  reason: "repo";
+  /**
+   * Set when `repoId` failed UUID lookup but matched a repo `name` owned
+   * by the same user — almost always the smoke-test footgun "I passed the
+   * name instead of the id".
+   */
+  hint?: { resolved_id: string; name: string };
+}
+
+export interface RepoForbidden {
+  error: "forbidden";
+}
+
 export async function ensureRepoOwned(
   handle: DB,
   repoId: string,
   ownerLogin: string,
-): Promise<RepoRow | { error: "not_found" } | { error: "forbidden" }> {
+): Promise<RepoRow | RepoNotFound | RepoForbidden> {
   const repo = await loadRepo(handle, repoId);
-  if (!repo) return { error: "not_found" };
+  if (!repo) {
+    const named = await lookupRepoByName(handle, ownerLogin, repoId);
+    if (named) {
+      return {
+        error: "not_found",
+        reason: "repo",
+        hint: { resolved_id: named.id, name: named.name },
+      };
+    }
+    return { error: "not_found", reason: "repo" };
+  }
   if (repo.ownerLogin !== ownerLogin) return { error: "forbidden" };
   return repo;
 }
