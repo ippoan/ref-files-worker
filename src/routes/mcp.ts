@@ -103,6 +103,21 @@ function registerTools(server: McpServer, dispatch: Dispatch): void {
   );
 
   server.registerTool(
+    "folder_download_url",
+    {
+      description:
+        "Issue a pre-signed URL that streams the folder (recursive) as a single tar.gz. Use this instead of file_get when reading multiple files — the URL can be piped to `tar xzf -` and avoids base64 token bloat. Root path = \"\" downloads the whole repo.",
+      inputSchema: { repo_id: z.string(), path: z.string().default("") },
+    },
+    async ({ repo_id, path }) =>
+      toResult(
+        await dispatch("GET", "/v1/folders/download-url", {
+          query: { repo_id, path },
+        }),
+      ),
+  );
+
+  server.registerTool(
     "file_put",
     {
       description:
