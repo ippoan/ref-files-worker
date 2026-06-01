@@ -9,13 +9,13 @@
  */
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
-import worker from "../src/index";
+import app from "../src/app";
 import { mintToken } from "./helpers";
 
 const SHARED = "test-internal-shared-secret";
 
 async function post(headers: Record<string, string>, body?: unknown): Promise<Response> {
-  return worker.fetch(
+  return app.fetch(
     new Request("https://x/mcp/introspect", {
       method: "POST",
       headers: { "Content-Type": "application/json", ...headers },
@@ -77,7 +77,7 @@ describe("POST /mcp/introspect — mode 2 (shared secret)", () => {
   });
 
   it("returns 200 active:false when the body is not JSON", async () => {
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/mcp/introspect", {
         method: "POST",
         headers: { Authorization: SHARED, "Content-Type": "application/json" },

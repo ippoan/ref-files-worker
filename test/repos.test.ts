@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import worker from "../src/index";
+import app from "../src/app";
 import { applyMigrations, authHeader } from "./helpers";
 
 beforeAll(applyMigrations);
@@ -9,7 +9,7 @@ const ctx = {} as ExecutionContext;
 
 describe("repo_init", () => {
   it("creates a repo and returns 201", async () => {
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/repos", {
         method: "POST",
         headers: authHeader({ github_login: "alice" }),
@@ -27,14 +27,14 @@ describe("repo_init", () => {
 
   it("is idempotent on (owner, name)", async () => {
     const headers = authHeader({ github_login: "alice" });
-    const r1 = await worker.fetch(
+    const r1 = await app.fetch(
       new Request("https://x/v1/repos", { method: "POST", headers, body: JSON.stringify({ name: "shared" }) }),
       env,
       ctx,
     );
     expect(r1.status).toBe(201);
     const b1 = (await r1.json()) as { id: string };
-    const r2 = await worker.fetch(
+    const r2 = await app.fetch(
       new Request("https://x/v1/repos", { method: "POST", headers, body: JSON.stringify({ name: "shared" }) }),
       env,
       ctx,
@@ -45,7 +45,7 @@ describe("repo_init", () => {
   });
 
   it("isolates by github_login", async () => {
-    const a = await worker.fetch(
+    const a = await app.fetch(
       new Request("https://x/v1/repos", {
         method: "POST",
         headers: authHeader({ github_login: "alice" }),
@@ -54,7 +54,7 @@ describe("repo_init", () => {
       env,
       ctx,
     );
-    const b = await worker.fetch(
+    const b = await app.fetch(
       new Request("https://x/v1/repos", {
         method: "POST",
         headers: authHeader({ github_login: "bob" }),
@@ -69,7 +69,7 @@ describe("repo_init", () => {
   });
 
   it("rejects bad repo names", async () => {
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/repos", {
         method: "POST",
         headers: authHeader(),
@@ -88,19 +88,19 @@ describe("repos_list", () => {
     const h1 = authHeader({ github_login: "rl-alice" });
     const h2 = authHeader({ github_login: "rl-bob" });
     for (const name of ["one", "two"]) {
-      await worker.fetch(
+      await app.fetch(
         new Request("https://x/v1/repos", { method: "POST", headers: h1, body: JSON.stringify({ name }) }),
         env,
         ctx,
       );
     }
-    await worker.fetch(
+    await app.fetch(
       new Request("https://x/v1/repos", { method: "POST", headers: h2, body: JSON.stringify({ name: "carol" }) }),
       env,
       ctx,
     );
 
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/repos", { headers: h1 }),
       env,
       ctx,
@@ -116,7 +116,7 @@ describe("repos_list", () => {
   });
 
   it("returns an empty list for a user with no repos", async () => {
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/repos", { headers: authHeader({ github_login: "rl-nobody" }) }),
       env,
       ctx,
@@ -129,7 +129,7 @@ describe("repos_list", () => {
 describe("ensureRepoOwned hint on name-shaped repo_id", () => {
   it("attaches { hint: { resolved_id, name } } when caller passed a name instead of the UUID", async () => {
     const headers = authHeader({ github_login: "hint-alice" });
-    const init = await worker.fetch(
+    const init = await app.fetch(
       new Request("https://x/v1/repos", { method: "POST", headers, body: JSON.stringify({ name: "skills" }) }),
       env,
       ctx,
@@ -137,7 +137,7 @@ describe("ensureRepoOwned hint on name-shaped repo_id", () => {
     const { id: realId } = (await init.json()) as { id: string };
 
     // Pass the name as repo_id — this is the footgun we want to catch.
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/folders?repo_id=skills", { headers }),
       env,
       ctx,
@@ -151,13 +151,13 @@ describe("ensureRepoOwned hint on name-shaped repo_id", () => {
 
   it("does NOT leak hints across owners", async () => {
     const ownerHeaders = authHeader({ github_login: "hint-owner" });
-    await worker.fetch(
+    await app.fetch(
       new Request("https://x/v1/repos", { method: "POST", headers: ownerHeaders, body: JSON.stringify({ name: "private" }) }),
       env,
       ctx,
     );
     // A different user probes the same name — must not get a hint back.
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/folders?repo_id=private", {
         headers: authHeader({ github_login: "hint-snooper" }),
       }),

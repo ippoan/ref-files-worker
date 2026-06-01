@@ -1,6 +1,12 @@
 name = "ref-files-worker"
 main = "src/index.ts"
-compatibility_date = "2024-12-01"
+# 2025-05-01: nodejs_compat_v2 が自動有効化される閾値以降。`agents` SDK
+# (durable MCP transport で必要) が `mimetext` → `mime-types` の bare
+# `require("path")` を引っ張るため、esbuild に Node built-in として
+# resolve させる必要がある (= 旧 2024-12-01 では Deploy で
+# "Could not resolve 'path'" となり build fail)。echo-do-ws と同期。
+compatibility_date = "2025-05-01"
+compatibility_flags = ["nodejs_compat"]
 # auth-worker と同じアカウント。
 account_id = "24b45709d060d957340180e995f0d373"
 
@@ -95,3 +101,19 @@ secret_name = "INTERNAL_SHARED_SECRET"
 binding = "MCP_JWT_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "INTERNAL_SHARED_SECRET"
+
+# ─── Durable Object for `/mcp` (durable MCP transport, Refs #31) ────────────
+# `RefFilesMcp` (src/durable.ts) wraps the agents-SDK McpAgent inside a DO
+# so the `/mcp` WebSocket survives deploys via reconnect (Gate A) and can
+# push `notifications/tools/list_changed` once the client side reads them
+# (Gate B — anthropics/claude-code#13646).
+#
+# The class is registered as a SQLite-backed DO because McpAgent persists
+# session state (props, initialize request) in DO SQLite storage.
+[[durable_objects.bindings]]
+name = "MCP_OBJECT"
+class_name = "RefFilesMcp"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RefFilesMcp"]

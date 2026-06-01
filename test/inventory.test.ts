@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import worker from "../src/index";
+import app from "../src/app";
 import { applyMigrations, authHeader } from "./helpers";
 
 beforeAll(applyMigrations);
@@ -9,7 +9,7 @@ const ctx = {} as ExecutionContext;
 const h = (login: string) => authHeader({ github_login: login });
 
 async function initRepo(login: string, name: string): Promise<string> {
-  const res = await worker.fetch(
+  const res = await app.fetch(
     new Request("https://x/v1/repos", { method: "POST", headers: h(login), body: JSON.stringify({ name }) }),
     env,
     ctx,
@@ -18,7 +18,7 @@ async function initRepo(login: string, name: string): Promise<string> {
 }
 
 async function put(repoId: string, path: string, text: string, login: string): Promise<Response> {
-  return worker.fetch(
+  return app.fetch(
     new Request("https://x/v1/files", {
       method: "POST",
       headers: h(login),
@@ -30,7 +30,7 @@ async function put(repoId: string, path: string, text: string, login: string): P
 }
 
 async function del(repoId: string, path: string, login: string): Promise<Response> {
-  return worker.fetch(
+  return app.fetch(
     new Request(`https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent(path)}`, {
       method: "DELETE",
       headers: h(login),
@@ -54,7 +54,7 @@ interface InvEntry {
 }
 
 async function inventory(login: string, qs = ""): Promise<{ status: number; files: InvEntry[] }> {
-  const res = await worker.fetch(
+  const res = await app.fetch(
     new Request(`https://x/v1/inventory${qs}`, { headers: h(login) }),
     env,
     ctx,
@@ -135,7 +135,7 @@ describe("GET /v1/inventory", () => {
   });
 
   it("requires a bearer token (401 without auth)", async () => {
-    const res = await worker.fetch(new Request("https://x/v1/inventory"), env, ctx);
+    const res = await app.fetch(new Request("https://x/v1/inventory"), env, ctx);
     expect(res.status).toBe(401);
   });
 });

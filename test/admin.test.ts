@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import worker from "../src/index";
+import app from "../src/app";
 import { accessHeader, applyMigrations, authHeader } from "./helpers";
 
 beforeAll(applyMigrations);
@@ -8,7 +8,7 @@ beforeAll(applyMigrations);
 const ctx = {} as ExecutionContext;
 
 async function seed(login: string, repoName: string, path: string, text: string): Promise<void> {
-  const init = await worker.fetch(
+  const init = await app.fetch(
     new Request("https://x/v1/repos", {
       method: "POST",
       headers: authHeader({ github_login: login }),
@@ -18,7 +18,7 @@ async function seed(login: string, repoName: string, path: string, text: string)
     ctx,
   );
   const repoId = ((await init.json()) as { id: string }).id;
-  await worker.fetch(
+  await app.fetch(
     new Request("https://x/v1/files", {
       method: "POST",
       headers: authHeader({ github_login: login }),
@@ -36,7 +36,7 @@ interface AdminBody {
 }
 
 async function uiInventory(headers: Record<string, string>, qs = ""): Promise<Response> {
-  return worker.fetch(new Request(`https://x/ui/inventory${qs}`, { headers }), env, ctx);
+  return app.fetch(new Request(`https://x/ui/inventory${qs}`, { headers }), env, ctx);
 }
 
 describe("GET /ui/inventory (Cloudflare Access)", () => {
