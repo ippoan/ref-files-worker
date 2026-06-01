@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import worker from "../src/index";
+import app from "../src/app";
 import { applyMigrations, authHeader } from "./helpers";
 
 beforeAll(applyMigrations);
@@ -8,7 +8,7 @@ beforeAll(applyMigrations);
 const ctx = {} as ExecutionContext;
 
 async function initRepo(login: string, name: string): Promise<string> {
-  const res = await worker.fetch(
+  const res = await app.fetch(
     new Request("https://x/v1/repos", {
       method: "POST",
       headers: authHeader({ github_login: login }),
@@ -24,7 +24,7 @@ async function initRepo(login: string, name: string): Promise<string> {
 describe("folder_create", () => {
   it("mkdir -p creates intermediate folders", async () => {
     const repoId = await initRepo("alice", "fc-a");
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/folders", {
         method: "POST",
         headers: authHeader({ github_login: "alice" }),
@@ -39,7 +39,7 @@ describe("folder_create", () => {
     expect(body.name).toBe("c");
 
     // listing root sees `a/`.
-    const list = await worker.fetch(
+    const list = await app.fetch(
       new Request(`https://x/v1/folders?repo_id=${repoId}&path=`, {
         headers: authHeader({ github_login: "alice" }),
       }),
@@ -53,7 +53,7 @@ describe("folder_create", () => {
 
   it("rejects path traversal", async () => {
     const repoId = await initRepo("alice", "fc-b");
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/folders", {
         method: "POST",
         headers: authHeader({ github_login: "alice" }),
@@ -67,7 +67,7 @@ describe("folder_create", () => {
 
   it("forbids access across owners", async () => {
     const repoId = await initRepo("alice", "fc-c");
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/folders", {
         method: "POST",
         headers: authHeader({ github_login: "mallory" }),
@@ -89,7 +89,7 @@ describe("folder_download_url", () => {
       ["a/b/c/deep.txt", "deeper"],
       ["a/sibling.md", "# top"],
     ] as const) {
-      await worker.fetch(
+      await app.fetch(
         new Request("https://x/v1/files", {
           method: "POST",
           headers: h,
@@ -105,7 +105,7 @@ describe("folder_download_url", () => {
   it("issues a download-url and streams a tar.gz of the subtree", async () => {
     const repoId = await seed("alice", "fd-a");
     const h = authHeader({ github_login: "alice" });
-    const issue = await worker.fetch(
+    const issue = await app.fetch(
       new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=a/b`, { headers: h }),
       env,
       ctx,
@@ -115,7 +115,7 @@ describe("folder_download_url", () => {
     expect(body.content_type).toBe("application/gzip");
     expect(body.download_url).toMatch(/\/download\//);
 
-    const dl = await worker.fetch(new Request(`https://x/download/${body.token}`), env, ctx);
+    const dl = await app.fetch(new Request(`https://x/download/${body.token}`), env, ctx);
     expect(dl.status).toBe(200);
     expect(dl.headers.get("Content-Type")).toBe("application/gzip");
     expect(dl.headers.get("X-File-Count")).toBe("2");
@@ -132,21 +132,21 @@ describe("folder_download_url", () => {
   it("supports root path = whole repo", async () => {
     const repoId = await seed("alice", "fd-root");
     const h = authHeader({ github_login: "alice" });
-    const issue = await worker.fetch(
+    const issue = await app.fetch(
       new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=`, { headers: h }),
       env,
       ctx,
     );
     expect(issue.status).toBe(201);
     const { token } = (await issue.json()) as { token: string };
-    const dl = await worker.fetch(new Request(`https://x/download/${token}`), env, ctx);
+    const dl = await app.fetch(new Request(`https://x/download/${token}`), env, ctx);
     expect(dl.status).toBe(200);
     expect(dl.headers.get("X-File-Count")).toBe("3");
   });
 
   it("404 on missing folder", async () => {
     const repoId = await initRepo("alice", "fd-missing");
-    const r = await worker.fetch(
+    const r = await app.fetch(
       new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=nope`, {
         headers: authHeader({ github_login: "alice" }),
       }),
@@ -157,7 +157,7 @@ describe("folder_download_url", () => {
   });
 
   it("rejects missing repo_id", async () => {
-    const r = await worker.fetch(
+    const r = await app.fetch(
       new Request("https://x/v1/folders/download-url", { headers: authHeader() }),
       env,
       ctx,
@@ -167,7 +167,7 @@ describe("folder_download_url", () => {
 
   it("forbids cross-owner download", async () => {
     const repoId = await seed("alice", "fd-cross");
-    const r = await worker.fetch(
+    const r = await app.fetch(
       new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=a`, {
         headers: authHeader({ github_login: "mallory" }),
       }),
@@ -179,7 +179,7 @@ describe("folder_download_url", () => {
 
   it("token consumed after first GET", async () => {
     const repoId = await seed("alice", "fd-consume");
-    const issue = await worker.fetch(
+    const issue = await app.fetch(
       new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=a`, {
         headers: authHeader({ github_login: "alice" }),
       }),
@@ -187,10 +187,10 @@ describe("folder_download_url", () => {
       ctx,
     );
     const { token } = (await issue.json()) as { token: string };
-    const first = await worker.fetch(new Request(`https://x/download/${token}`), env, ctx);
+    const first = await app.fetch(new Request(`https://x/download/${token}`), env, ctx);
     expect(first.status).toBe(200);
     await first.arrayBuffer();
-    const second = await worker.fetch(new Request(`https://x/download/${token}`), env, ctx);
+    const second = await app.fetch(new Request(`https://x/download/${token}`), env, ctx);
     expect(second.status).toBe(410);
   });
 });
@@ -199,12 +199,12 @@ describe("folder_list recursive", () => {
   it("returns nested folders + files when recursive=true", async () => {
     const repoId = await initRepo("alice", "fl-r");
     const h = authHeader({ github_login: "alice" });
-    await worker.fetch(
+    await app.fetch(
       new Request("https://x/v1/folders", { method: "POST", headers: h, body: JSON.stringify({ repo_id: repoId, path: "a/b/c" }) }),
       env,
       ctx,
     );
-    await worker.fetch(
+    await app.fetch(
       new Request("https://x/v1/files", {
         method: "POST",
         headers: h,
@@ -213,7 +213,7 @@ describe("folder_list recursive", () => {
       env,
       ctx,
     );
-    const r = await worker.fetch(
+    const r = await app.fetch(
       new Request(`https://x/v1/folders?repo_id=${repoId}&path=a&recursive=true`, { headers: h }),
       env,
       ctx,

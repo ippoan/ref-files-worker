@@ -1,6 +1,6 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
-import worker from "../src/index";
+import app from "../src/app";
 import { applyMigrations, authHeader } from "./helpers";
 
 beforeAll(applyMigrations);
@@ -9,7 +9,7 @@ const ctx = {} as ExecutionContext;
 const h = (login = "alice") => authHeader({ github_login: login });
 
 async function initRepo(login: string, name: string): Promise<string> {
-  const res = await worker.fetch(
+  const res = await app.fetch(
     new Request("https://x/v1/repos", {
       method: "POST",
       headers: authHeader({ github_login: login }),
@@ -27,7 +27,7 @@ async function put(
   text: string,
   login = "alice",
 ): Promise<Response> {
-  return worker.fetch(
+  return app.fetch(
     new Request("https://x/v1/files", {
       method: "POST",
       headers: h(login),
@@ -55,7 +55,7 @@ describe("file_put + file_get", () => {
     expect(b2.revision.rev_number).toBe(2);
 
     // get latest
-    const g = await worker.fetch(
+    const g = await app.fetch(
       new Request(`https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent("docs/intro.md")}`, {
         headers: h(),
       }),
@@ -68,7 +68,7 @@ describe("file_put + file_get", () => {
     expect(atob(gb.content_base64)).toBe("v2");
 
     // get specific old revision
-    const g1 = await worker.fetch(
+    const g1 = await app.fetch(
       new Request(
         `https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent("docs/intro.md")}&revision=1`,
         { headers: h() },
@@ -92,7 +92,7 @@ describe("file_history", () => {
   it("returns revisions newest-first, default limit 20, capped at 100", async () => {
     const repoId = await initRepo("alice", "fh-a");
     for (let i = 0; i < 5; i++) await put(repoId, "log.txt", `v${i}`);
-    const r = await worker.fetch(
+    const r = await app.fetch(
       new Request(
         `https://x/v1/files/history?repo_id=${repoId}&path=${encodeURIComponent("log.txt")}`,
         { headers: h() },
@@ -110,7 +110,7 @@ describe("file_move", () => {
   it("renames a file and auto-creates the destination folder", async () => {
     const repoId = await initRepo("alice", "fm-a");
     await put(repoId, "a/x.md", "x");
-    const r = await worker.fetch(
+    const r = await app.fetch(
       new Request("https://x/v1/files/move", {
         method: "POST",
         headers: h(),
@@ -125,7 +125,7 @@ describe("file_move", () => {
     expect(body.name).toBe("y.md");
 
     // old path is now 404
-    const old = await worker.fetch(
+    const old = await app.fetch(
       new Request(`https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent("a/x.md")}`, {
         headers: h(),
       }),
@@ -139,7 +139,7 @@ describe("file_move", () => {
     const repoId = await initRepo("alice", "fm-b");
     await put(repoId, "a.md", "a");
     await put(repoId, "b.md", "b");
-    const r = await worker.fetch(
+    const r = await app.fetch(
       new Request("https://x/v1/files/move", {
         method: "POST",
         headers: h(),
@@ -156,7 +156,7 @@ describe("file_delete (soft)", () => {
   it("sets deleted_at and hides from default file_get", async () => {
     const repoId = await initRepo("alice", "fd-a");
     await put(repoId, "trash.md", "hi");
-    const d = await worker.fetch(
+    const d = await app.fetch(
       new Request(`https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent("trash.md")}`, {
         method: "DELETE",
         headers: h(),
@@ -166,7 +166,7 @@ describe("file_delete (soft)", () => {
     );
     expect(d.status).toBe(200);
 
-    const g = await worker.fetch(
+    const g = await app.fetch(
       new Request(`https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent("trash.md")}`, {
         headers: h(),
       }),
@@ -176,7 +176,7 @@ describe("file_delete (soft)", () => {
     expect(g.status).toBe(404);
 
     // Specific revision still reachable (history-walk semantics).
-    const g1 = await worker.fetch(
+    const g1 = await app.fetch(
       new Request(
         `https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent("trash.md")}&revision=1`,
         { headers: h() },
@@ -194,7 +194,7 @@ describe("file_search", () => {
     await put(repoId, "docs/a-readme.md", "x");
     await put(repoId, "docs/sub/b-readme.md", "x");
     await put(repoId, "other/readme.md", "x");
-    const r1 = await worker.fetch(
+    const r1 = await app.fetch(
       new Request(`https://x/v1/files/search?repo_id=${repoId}&query=readme`, { headers: h() }),
       env,
       ctx,
@@ -207,7 +207,7 @@ describe("file_search", () => {
       "other/readme.md",
     ]);
 
-    const r2 = await worker.fetch(
+    const r2 = await app.fetch(
       new Request(
         `https://x/v1/files/search?repo_id=${repoId}&query=readme&under_path=docs`,
         { headers: h() },
@@ -222,7 +222,7 @@ describe("file_search", () => {
       "docs/sub/b-readme.md",
     ]);
 
-    const r3 = await worker.fetch(
+    const r3 = await app.fetch(
       new Request(`https://x/v1/files/search?repo_id=${repoId}&query=readme&limit=1`, { headers: h() }),
       env,
       ctx,
@@ -234,7 +234,7 @@ describe("file_search", () => {
   it("includes soft-deleted only when include_deleted=true", async () => {
     const repoId = await initRepo("alice", "fs-b");
     await put(repoId, "ghost.md", "x");
-    await worker.fetch(
+    await app.fetch(
       new Request(`https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent("ghost.md")}`, {
         method: "DELETE",
         headers: h(),
@@ -242,13 +242,13 @@ describe("file_search", () => {
       env,
       ctx,
     );
-    const live = await worker.fetch(
+    const live = await app.fetch(
       new Request(`https://x/v1/files/search?repo_id=${repoId}&query=ghost`, { headers: h() }),
       env,
       ctx,
     );
     expect(((await live.json()) as { files: unknown[] }).files.length).toBe(0);
-    const all = await worker.fetch(
+    const all = await app.fetch(
       new Request(
         `https://x/v1/files/search?repo_id=${repoId}&query=ghost&include_deleted=true`,
         { headers: h() },

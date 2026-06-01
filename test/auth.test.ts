@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { JwtVerifyError, verifyMcpJwt } from "../src/lib/jwt";
-import worker from "../src/index";
+import app from "../src/app";
 import { env } from "cloudflare:test";
 
 const AUD = "https://ref-files.test.invalid";
@@ -126,7 +126,7 @@ describe("verifyMcpJwt", () => {
 
 describe("worker /health & /v1 gating", () => {
   it("/health is unauthenticated", async () => {
-    const res = await worker.fetch(new Request("https://x/health"), env, {} as ExecutionContext);
+    const res = await app.fetch(new Request("https://x/health"), env, {} as ExecutionContext);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { ok: boolean; env: string };
     expect(body.ok).toBe(true);
@@ -134,7 +134,7 @@ describe("worker /health & /v1 gating", () => {
   });
 
   it("/v1/* without Authorization is 401", async () => {
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/v1/repos", { method: "POST" }),
       env,
       {} as ExecutionContext,

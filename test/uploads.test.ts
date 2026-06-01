@@ -9,7 +9,7 @@
 import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
-import worker from "../src/index";
+import app from "../src/app";
 import { applyMigrations, authHeader } from "./helpers";
 
 beforeAll(applyMigrations);
@@ -18,7 +18,7 @@ const ctx = {} as ExecutionContext;
 const h = (login = "alice") => authHeader({ github_login: login });
 
 async function initRepo(login: string, name: string): Promise<string> {
-  const res = await worker.fetch(
+  const res = await app.fetch(
     new Request("https://x/v1/repos", {
       method: "POST",
       headers: authHeader({ github_login: login }),
@@ -97,7 +97,7 @@ describe("single-file pre-signed upload", () => {
   it("init → PUT bytes → file_get returns same bytes", async () => {
     const repoId = await initRepo("alice", "up-single-a");
 
-    const initRes = await worker.fetch(
+    const initRes = await app.fetch(
       new Request("https://x/v1/files/upload-init", {
         method: "POST",
         headers: h(),
@@ -122,7 +122,7 @@ describe("single-file pre-signed upload", () => {
     const token = initBody.token;
 
     const payload = new TextEncoder().encode('{"hello":"world"}');
-    const putRes = await worker.fetch(
+    const putRes = await app.fetch(
       new Request(`https://x/upload/${token}`, {
         method: "PUT",
         body: payload,
@@ -140,7 +140,7 @@ describe("single-file pre-signed upload", () => {
     expect(Number(putBody.revision.size)).toBe(payload.byteLength);
 
     // Read it back through the existing JSON file_get.
-    const getRes = await worker.fetch(
+    const getRes = await app.fetch(
       new Request(
         `https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent("spec/openapi.json")}`,
         { headers: h() },
@@ -156,7 +156,7 @@ describe("single-file pre-signed upload", () => {
 
   it("replay returns 410 (token consumed)", async () => {
     const repoId = await initRepo("alice", "up-single-b");
-    const init = await worker.fetch(
+    const init = await app.fetch(
       new Request("https://x/v1/files/upload-init", {
         method: "POST",
         headers: h(),
@@ -166,13 +166,13 @@ describe("single-file pre-signed upload", () => {
       ctx,
     );
     const { token } = (await init.json()) as { token: string };
-    const first = await worker.fetch(
+    const first = await app.fetch(
       new Request(`https://x/upload/${token}`, { method: "PUT", body: "first" }),
       env,
       ctx,
     );
     expect(first.status).toBe(201);
-    const second = await worker.fetch(
+    const second = await app.fetch(
       new Request(`https://x/upload/${token}`, { method: "PUT", body: "second" }),
       env,
       ctx,
@@ -181,7 +181,7 @@ describe("single-file pre-signed upload", () => {
   });
 
   it("unknown token returns 404", async () => {
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request("https://x/upload/no-such-token", { method: "PUT", body: "x" }),
       env,
       ctx,
@@ -192,7 +192,7 @@ describe("single-file pre-signed upload", () => {
   it("wrong-kind token (download token used for PUT) returns 400", async () => {
     const repoId = await initRepo("alice", "up-single-c");
     // seed a file so download-url can succeed
-    await worker.fetch(
+    await app.fetch(
       new Request("https://x/v1/files", {
         method: "POST",
         headers: h(),
@@ -201,7 +201,7 @@ describe("single-file pre-signed upload", () => {
       env,
       ctx,
     );
-    const init = await worker.fetch(
+    const init = await app.fetch(
       new Request(
         `https://x/v1/files/download-url?repo_id=${repoId}&path=seed.txt`,
         { headers: h() },
@@ -210,7 +210,7 @@ describe("single-file pre-signed upload", () => {
       ctx,
     );
     const { token } = (await init.json()) as { token: string };
-    const wrong = await worker.fetch(
+    const wrong = await app.fetch(
       new Request(`https://x/upload/${token}`, { method: "PUT", body: "x" }),
       env,
       ctx,
@@ -228,7 +228,7 @@ describe("tar.gz bulk upload", () => {
       { name: "spec/sub/c.bin", bytes: new Uint8Array([0, 1, 2, 3, 255, 128]) },
     ]);
 
-    const init = await worker.fetch(
+    const init = await app.fetch(
       new Request("https://x/v1/files/bulk-upload-init", {
         method: "POST",
         headers: h(),
@@ -241,7 +241,7 @@ describe("tar.gz bulk upload", () => {
     const initBody = (await init.json()) as { token: string; content_type: string };
     expect(initBody.content_type).toBe("application/gzip");
 
-    const put = await worker.fetch(
+    const put = await app.fetch(
       new Request(`https://x/upload/${initBody.token}`, {
         method: "PUT",
         headers: { "Content-Type": "application/gzip" },
@@ -262,7 +262,7 @@ describe("tar.gz bulk upload", () => {
     // verify one binary entry round-trips byte-exact
     const binFile = body.files.find((f) => f.path === "spec/sub/c.bin")!;
     expect(binFile.size).toBe(6);
-    const get = await worker.fetch(
+    const get = await app.fetch(
       new Request(
         `https://x/v1/files?repo_id=${repoId}&path=${encodeURIComponent("spec/sub/c.bin")}`,
         { headers: h() },
@@ -283,7 +283,7 @@ describe("tar.gz bulk upload", () => {
     const tarGz = await buildTarGz([
       { name: "x.md", bytes: new TextEncoder().encode("# x") },
     ]);
-    const init = await worker.fetch(
+    const init = await app.fetch(
       new Request("https://x/v1/files/bulk-upload-init", {
         method: "POST",
         headers: h(),
@@ -293,7 +293,7 @@ describe("tar.gz bulk upload", () => {
       ctx,
     );
     const { token } = (await init.json()) as { token: string };
-    const put = await worker.fetch(
+    const put = await app.fetch(
       new Request(`https://x/upload/${token}`, { method: "PUT", body: tarGz }),
       env,
       ctx,
@@ -309,7 +309,7 @@ describe("pre-signed download", () => {
     const repoId = await initRepo("alice", "dl-a");
     const payload = new Uint8Array([0xde, 0xad, 0xbe, 0xef, 0x00, 0x01, 0x02]);
     // file_put expects base64 string
-    await worker.fetch(
+    await app.fetch(
       new Request("https://x/v1/files", {
         method: "POST",
         headers: h(),
@@ -324,7 +324,7 @@ describe("pre-signed download", () => {
       ctx,
     );
 
-    const init = await worker.fetch(
+    const init = await app.fetch(
       new Request(
         `https://x/v1/files/download-url?repo_id=${repoId}&path=binary.bin`,
         { headers: h() },
@@ -337,7 +337,7 @@ describe("pre-signed download", () => {
     expect(download_url).toMatch(/\/download\//);
     expect(tokenFromUrl(download_url)).toBe(token);
 
-    const dl = await worker.fetch(
+    const dl = await app.fetch(
       new Request(`https://x/download/${token}`),
       env,
       ctx,
@@ -352,7 +352,7 @@ describe("pre-signed download", () => {
 
   it("download token is reusable until expiry", async () => {
     const repoId = await initRepo("alice", "dl-b");
-    await worker.fetch(
+    await app.fetch(
       new Request("https://x/v1/files", {
         method: "POST",
         headers: h(),
@@ -361,25 +361,25 @@ describe("pre-signed download", () => {
       env,
       ctx,
     );
-    const init = await worker.fetch(
+    const init = await app.fetch(
       new Request(`https://x/v1/files/download-url?repo_id=${repoId}&path=r.txt`, { headers: h() }),
       env,
       ctx,
     );
     const { token } = (await init.json()) as { token: string };
-    const a = await worker.fetch(new Request(`https://x/download/${token}`), env, ctx);
+    const a = await app.fetch(new Request(`https://x/download/${token}`), env, ctx);
     expect(a.status).toBe(200);
     expect(await a.text()).toBe("reread");
     // second fetch on the same token still works (download tokens are not
     // marked consumed — only upload tokens are single-shot).
-    const b = await worker.fetch(new Request(`https://x/download/${token}`), env, ctx);
+    const b = await app.fetch(new Request(`https://x/download/${token}`), env, ctx);
     expect(b.status).toBe(200);
     expect(await b.text()).toBe("reread");
   });
 
   it("download-url 404s for unknown path", async () => {
     const repoId = await initRepo("alice", "dl-c");
-    const res = await worker.fetch(
+    const res = await app.fetch(
       new Request(`https://x/v1/files/download-url?repo_id=${repoId}&path=missing.txt`, {
         headers: h(),
       }),
