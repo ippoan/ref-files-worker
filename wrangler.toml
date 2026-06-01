@@ -16,14 +16,22 @@ WORKER_ENV = "prod"
 # ref-files 追加 (auth-worker#238) が即時反映されるのは auth-staging 側。
 # connector を即つなげるため staging を AS に指す。
 AUTH_WORKER_ORIGIN = "https://auth-staging.ippoan.org"
-# JWT の `aud` claim 許可リスト (comma-sep)。2 経路を受理する:
-#   - "ref-files-mcp-server-rs"      : legacy relay binary path (auth-worker
-#     `MCP_JWT_AUDIENCE_ALLOWLIST` が device flow で mint する binary 名)。
-#   - "https://ref-files.ippoan.org" : claude.ai connector の OAuth path。
-#     MCP Authorization spec 2025-06-18 (RFC 8707) で client が `resource` を
-#     送り、auth-worker `/mcp/token` がその resource URL を `aud` に焼くため。
-#     auth-worker `MCP_RESOURCE_ORIGINS_ALLOWLIST` に本 origin の登録が前提。
-MCP_JWT_AUDIENCE = "ref-files-mcp-server-rs,https://ref-files.ippoan.org"
+# JWT の `aud` claim 検証ポリシー。`"*"` = aud を問わず、auth-worker が
+# 共有 HS256 鍵で mint した token なら受理する (= security-inventory が
+# `/mcp/introspect` 委譲で実現しているのと同じ受理挙動を、ローカル検証のまま
+# 実現)。理由:
+#   - claude.ai connector が mint する `aud` は経路で変わる
+#     (RFC 8707 `resource` 送信時は https://ref-files.ippoan.org、
+#      非送信時は ecosystem 既定の "github-mcp-server-rs")。固定 aud に pin
+#      すると connector token を弾いてしまう。
+#   - native `/mcp` は各 tool 呼び出しを内部で `/v1/*` へ再 dispatch するため、
+#     introspect 委譲にすると 1 tool call で auth-worker へ 2 往復になる。
+#     ローカル検証 + aud 無問のこの方式なら往復ゼロで同じ受理を得る。
+#   - identity は `github_login` で確立し、署名 (共有鍵) が auth-worker mint を
+#     保証する。confused-deputy は secrets-inventory#43 が既に許容する範囲。
+# 特定 aud に絞りたい場合は comma-sep の allowlist
+# (例 "ref-files-mcp-server-rs,https://ref-files.ippoan.org") に戻せる。
+MCP_JWT_AUDIENCE = "*"
 
 # ─── Cloudflare Access (人間向け /ui/* surface) ─────────────────────────────
 # `/ui/*` は MCP JWT ではなく Cloudflare Access (Zero Trust SSO) で守る。

@@ -92,6 +92,25 @@ describe("verifyMcpJwt", () => {
     expect(claims.github_login).toBe("alice");
   });
 
+  it('"*" accepts any aud (signature is the gate) but still requires a valid signature', async () => {
+    // claude.ai connector mints a varying aud; "*" accepts any auth-worker token.
+    for (const aud of [
+      "github-mcp-server-rs",
+      "https://ref-files.ippoan.org",
+      "https://mcp-staging.ippoan.org",
+      "anything-at-all",
+    ]) {
+      const tok = await mintSigned("s3cret", { aud });
+      expect((await verifyMcpJwt(tok, "s3cret", "*")).aud).toBe(aud);
+    }
+    // "*" does NOT bypass signature verification.
+    const forged = await mintSigned("wrong-secret", { aud: "github-mcp-server-rs" });
+    await expect(verifyMcpJwt(forged, "s3cret", "*")).rejects.toMatchObject({ reason: "signature" });
+    // sub / github_login are still required even with "*".
+    const noLogin = await mintSigned("s3cret", { github_login: "" });
+    await expect(verifyMcpJwt(noLogin, "s3cret", "*")).rejects.toMatchObject({ reason: "github_login" });
+  });
+
   it("rejects an unsigned (alg=none) token", async () => {
     const header = b64url(JSON.stringify({ alg: "none", typ: "JWT" }));
     const payload = b64url(JSON.stringify({ sub: "x", github_login: "x", aud: AUD, exp: Math.floor(Date.now() / 1000) + 60 }));
