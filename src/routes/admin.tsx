@@ -8,9 +8,10 @@
  * `/v1/inventory` which is scoped to the JWT's own `owner_login`.
  *
  * `GET /ui/inventory` content-negotiates:
- *   - browsers (Accept: text/html) or `?format=html` → a rendered HTML table
- *     (hono/jsx, server-side rendered, zero client deps; inline JS only for
- *     client-side filter + column sort).
+ *   - browsers (Accept: text/html) or `?format=html` → a rendered folder tree
+ *     (hono/jsx, server-side rendered, zero client deps). Folders are native
+ *     <details>/<summary> so they collapse without JS; inline JS only adds a
+ *     filter box.
  *   - everything else (fetch/curl/MCP, `Accept: application/json`, `*\/*`,
  *     or `?format=json`) → the original JSON, so existing callers are
  *     unaffected.
@@ -33,32 +34,80 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-interface RepoGroup {
+// ─── Tree model ─────────────────────────────────────────────────────────────
+
+interface TreeNode {
+  name: string;
+  children: Map<string, TreeNode>;
+  /** Present iff this node is a file leaf. */
+  file?: InventoryEntry;
+  /** Lowercase haystack for client-side filtering (own path + descendants). */
+  search: string;
+}
+
+interface RepoTree {
   repoName: string;
   ownerLogin: string;
   repoId: string;
-  files: InventoryEntry[];
+  fileCount: number;
+  root: TreeNode;
 }
 
-/** Group a flat inventory into per-repo sections, sorted by repo name. */
-function groupByRepo(entries: InventoryEntry[]): RepoGroup[] {
-  const map = new Map<string, RepoGroup>();
-  for (const e of entries) {
-    let g = map.get(e.repo_id);
-    if (!g) {
-      g = { repoName: e.repo_name, ownerLogin: e.owner_login, repoId: e.repo_id, files: [] };
-      map.set(e.repo_id, g);
-    }
-    g.files.push(e);
+function newNode(name: string): TreeNode {
+  return { name, children: new Map(), search: "" };
+}
+
+/** Split each file's POSIX path into folder nodes + a file leaf. */
+function buildTree(repoName: string, ownerLogin: string, files: InventoryEntry[]): TreeNode {
+  const root = newNode("");
+  for (const f of files) {
+    const parts = f.path.split("/").filter((p) => p.length > 0);
+    let node = root;
+    parts.forEach((part, i) => {
+      let child = node.children.get(part);
+      if (!child) {
+        child = newNode(part);
+        node.children.set(part, child);
+      }
+      if (i === parts.length - 1) {
+        child.file = f;
+        // file leaves are searchable by path + repo + owner
+        child.search = `${f.path} ${repoName} ${ownerLogin}`.toLowerCase();
+      }
+      node = child;
+    });
   }
-  return [...map.values()].sort((a, b) => a.repoName.localeCompare(b.repoName));
+  // Folders aggregate their descendants' search strings (bottom-up).
+  const aggregate = (n: TreeNode): string => {
+    if (n.file && n.children.size === 0) return n.search;
+    let s = n.search;
+    for (const c of n.children.values()) s += " " + aggregate(c);
+    n.search = s;
+    return s;
+  };
+  aggregate(root);
+  return root;
 }
 
-// NOTE: STYLES and SCRIPT below are static module constants with no
-// interpolation, so the two `dangerouslySetInnerHTML` uses (the inline <style>
-// and <script>) never carry user input — no XSS surface. All user-derived
-// values (file paths, repo/owner names) are rendered via JSX expressions
-// (`{f.path}` etc.), which hono/jsx HTML-escapes automatically.
+function countFiles(n: TreeNode): number {
+  if (n.file && n.children.size === 0) return 1;
+  let total = 0;
+  for (const c of n.children.values()) total += countFiles(c);
+  return total;
+}
+
+/** Folders first, then files; each alphabetically. */
+function sortedChildren(n: TreeNode): TreeNode[] {
+  return [...n.children.values()].sort((a, b) => {
+    const aIsDir = a.children.size > 0 || !a.file;
+    const bIsDir = b.children.size > 0 || !b.file;
+    if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+}
+
+// ─── View ────────────────────────────────────────────────────────────────────
+
 const STYLES = `
 *{box-sizing:border-box}
 body{font:14px/1.5 -apple-system,system-ui,"Segoe UI",sans-serif;margin:0;color:#1a1a1a;background:#f6f7f9}
@@ -67,60 +116,83 @@ header h1{margin:0 0 4px;font-size:18px}
 header p{margin:0 0 12px;color:#666;font-size:13px}
 #q{width:100%;max-width:440px;padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:14px}
 section.repo{margin:20px 24px;background:#fff;border:1px solid #e2e4e8;border-radius:8px;overflow:hidden}
-section.repo h2{margin:0;padding:11px 16px;font-size:15px;background:#fafbfc;border-bottom:1px solid #e2e4e8}
+section.repo>h2{margin:0;padding:11px 16px;font-size:15px;background:#fafbfc;border-bottom:1px solid #e2e4e8}
 .owner{color:#888;font-weight:400;font-size:13px;margin-left:6px}
 .cnt{float:right;color:#667;font-weight:400;font-size:12px;background:#eef;padding:2px 9px;border-radius:10px}
-table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:8px 16px;border-bottom:1px solid #f0f1f3;font-size:13px;vertical-align:top}
-th{color:#555;font-weight:600;user-select:none;cursor:pointer;white-space:nowrap}
-th:hover{color:#000}
-tbody tr:hover{background:#f9fafb}
-td.path{word-break:break-all}
-td.num{white-space:nowrap;color:#555;font-variant-numeric:tabular-nums}
-tr.deleted td{color:#b00;text-decoration:line-through}
+details.folder>summary,.file{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:5px 16px;border-bottom:1px solid #f4f5f7;font-size:13px}
+details.folder>summary{cursor:pointer;list-style:none;font-weight:500;background:#fcfcfd}
+details.folder>summary::-webkit-details-marker{display:none}
+details.folder>summary .nm::before{content:"▸ ";color:#aab;display:inline-block;transition:transform .1s}
+details.folder[open]>summary .nm::before{content:"▾ "}
+.folder-body{margin-left:15px;border-left:1px solid #eceef1}
+.file .nm{color:#222;word-break:break-all}
+.file .nm::before{content:"📄 ";opacity:.7}
+.folder>summary .nm::after{content:"";}
+.nm{flex:1;min-width:0}
+.fcnt{color:#aab;font-size:11px;font-weight:400}
+.meta{color:#888;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:12px}
+.deleted .nm{color:#b00;text-decoration:line-through}
 .empty{margin:40px 24px;color:#888}
 `;
 
 const SCRIPT = `
 (function(){
   var q=document.getElementById('q');
-  function filter(){
+  if(!q)return;
+  q.addEventListener('input',function(){
     var t=(q.value||'').trim().toLowerCase();
-    document.querySelectorAll('section.repo').forEach(function(sec){
-      var vis=0;
-      sec.querySelectorAll('tbody tr').forEach(function(tr){
-        var hit=!t||tr.getAttribute('data-search').indexOf(t)>=0;
-        tr.style.display=hit?'':'none';
-        if(hit)vis++;
-      });
-      sec.style.display=vis?'':'none';
+    document.querySelectorAll('.file').forEach(function(el){
+      el.style.display=(!t||el.getAttribute('data-search').indexOf(t)>=0)?'':'none';
     });
-  }
-  if(q)q.addEventListener('input',filter);
-  document.querySelectorAll('th[data-col]').forEach(function(th){
-    th.addEventListener('click',function(){
-      var table=th.closest('table'),tbody=table.querySelector('tbody');
-      var idx=Array.prototype.indexOf.call(th.parentNode.children,th);
-      var col=th.getAttribute('data-col');
-      var asc=th.getAttribute('data-asc')!=='true';th.setAttribute('data-asc',asc);
-      var rows=Array.prototype.slice.call(tbody.querySelectorAll('tr'));
-      rows.sort(function(a,b){
-        var av,bv;
-        if(col==='size'){av=+a.children[idx].getAttribute('data-size');bv=+b.children[idx].getAttribute('data-size');}
-        else if(col==='rev'){av=+a.children[idx].textContent;bv=+b.children[idx].textContent;}
-        else{av=a.children[idx].textContent;bv=b.children[idx].textContent;}
-        return (av<bv?-1:av>bv?1:0)*(asc?1:-1);
-      });
-      rows.forEach(function(r){tbody.appendChild(r);});
+    document.querySelectorAll('details.folder').forEach(function(d){
+      var hit=!t||d.getAttribute('data-search').indexOf(t)>=0;
+      d.style.display=hit?'':'none';
+      if(t&&hit)d.open=true;
+    });
+    document.querySelectorAll('section.repo').forEach(function(sec){
+      var anyFile=sec.querySelector('.file:not([style*="none"])');
+      sec.style.display=(!t||anyFile)?'':'none';
     });
   });
 })();
 `;
 
-const InventoryPage: FC<{ viewer: string; count: number; groups: RepoGroup[] }> = ({
+const FileRow: FC<{ node: TreeNode }> = ({ node }) => {
+  const f = node.file as InventoryEntry;
+  return (
+    <div class={f.deleted_at ? "file deleted" : "file"} data-search={node.search}>
+      <span class="nm">{node.name}</span>
+      <span class="meta">
+        {formatSize(f.size)} · r{f.revision} · {f.updated_at}
+      </span>
+    </div>
+  );
+};
+
+const FolderTree: FC<{ node: TreeNode }> = ({ node }) => (
+  <>
+    {sortedChildren(node).map((c) =>
+      c.file && c.children.size === 0 ? (
+        <FileRow node={c} />
+      ) : (
+        <details class="folder" open data-search={c.search}>
+          <summary>
+            <span class="nm">{c.name}</span>
+            <span class="fcnt">{countFiles(c)}</span>
+          </summary>
+          <div class="folder-body">
+            <FolderTree node={c} />
+          </div>
+        </details>
+      ),
+    )}
+  </>
+);
+
+const InventoryPage: FC<{ viewer: string; count: number; repos: RepoTree[] }> = ({
   viewer,
   count,
-  groups,
+  repos,
 }) => (
   <html lang="ja">
     <head>
@@ -134,45 +206,21 @@ const InventoryPage: FC<{ viewer: string; count: number; groups: RepoGroup[] }> 
       <header>
         <h1>ref-files inventory</h1>
         <p>
-          viewer: {viewer} · {count} files · {groups.length} repos
+          viewer: {viewer} · {count} files · {repos.length} repos
         </p>
         <input id="q" type="search" placeholder="filter by path / repo / owner…" autocomplete="off" />
       </header>
-      {groups.length === 0 ? (
+      {repos.length === 0 ? (
         <p class="empty">No files.</p>
       ) : (
-        groups.map((g) => (
+        repos.map((r) => (
           <section class="repo">
             <h2>
-              {g.repoName}
-              <span class="owner">{g.ownerLogin}</span>
-              <span class="cnt">{g.files.length}</span>
+              {r.repoName}
+              <span class="owner">{r.ownerLogin}</span>
+              <span class="cnt">{r.fileCount}</span>
             </h2>
-            <table>
-              <thead>
-                <tr>
-                  <th data-col="path">path</th>
-                  <th data-col="size">size</th>
-                  <th data-col="rev">rev</th>
-                  <th data-col="updated">updated</th>
-                </tr>
-              </thead>
-              <tbody>
-                {g.files.map((f) => (
-                  <tr
-                    data-search={`${f.path} ${g.repoName} ${g.ownerLogin}`.toLowerCase()}
-                    class={f.deleted_at ? "deleted" : undefined}
-                  >
-                    <td class="path">{f.path}</td>
-                    <td class="num" data-size={String(f.size)}>
-                      {formatSize(f.size)}
-                    </td>
-                    <td class="num">{f.revision}</td>
-                    <td class="num">{f.updated_at}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <FolderTree node={r.root} />
           </section>
         ))
       )}
@@ -180,6 +228,33 @@ const InventoryPage: FC<{ viewer: string; count: number; groups: RepoGroup[] }> 
     </body>
   </html>
 );
+
+// NOTE: STYLES and SCRIPT are static module constants with no interpolation,
+// so the two `dangerouslySetInnerHTML` uses (inline <style>/<script>) never
+// carry user input — no XSS surface. All user-derived values (file/folder
+// names, repo/owner) are rendered via JSX expressions, which hono/jsx escapes.
+
+/** Build per-repo trees, sorted by repo name. */
+function buildRepoTrees(entries: InventoryEntry[]): RepoTree[] {
+  const byRepo = new Map<string, InventoryEntry[]>();
+  for (const e of entries) {
+    const arr = byRepo.get(e.repo_id);
+    if (arr) arr.push(e);
+    else byRepo.set(e.repo_id, [e]);
+  }
+  const trees: RepoTree[] = [];
+  for (const files of byRepo.values()) {
+    const first = files[0];
+    trees.push({
+      repoName: first.repo_name,
+      ownerLogin: first.owner_login,
+      repoId: first.repo_id,
+      fileCount: files.length,
+      root: buildTree(first.repo_name, first.owner_login, files),
+    });
+  }
+  return trees.sort((a, b) => a.repoName.localeCompare(b.repoName));
+}
 
 // GET /ui/inventory — global cross-repo, cross-owner file listing (admin view).
 //   ?owner=<login>        filter to one owner
@@ -204,5 +279,5 @@ admin.get("/inventory", async (c) => {
   if (!wantsHtml) {
     return c.json({ viewer, count: entries.length, files: entries }, 200);
   }
-  return c.html(<InventoryPage viewer={viewer} count={entries.length} groups={groupByRepo(entries)} />);
+  return c.html(<InventoryPage viewer={viewer} count={entries.length} repos={buildRepoTrees(entries)} />);
 });
