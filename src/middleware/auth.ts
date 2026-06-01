@@ -39,7 +39,7 @@ function unauthorized(
 ): Response {
   c.header(
     "WWW-Authenticate",
-    wwwAuthenticate(c.env.AUTH_WORKER_ORIGIN ?? "https://auth.ippoan.org", error),
+    wwwAuthenticate(c.env.AUTH_WORKER_ORIGIN ?? "https://auth-staging.ippoan.org", error),
   );
   return c.json({ error: "unauthorized", reason }, 401);
 }

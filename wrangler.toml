@@ -6,8 +6,16 @@ account_id = "24b45709d060d957340180e995f0d373"
 
 [vars]
 WORKER_ENV = "prod"
-# auth-worker origin — `Authorization: Bearer <mcp jwt>` の `aud` / 公開鍵検証で参照。
-AUTH_WORKER_ORIGIN = "https://auth.ippoan.org"
+# MCP OAuth authorization server origin。`/mcp` 401 の WWW-Authenticate
+# `resource_metadata` がこの origin の per-resource metadata
+# (`/.well-known/oauth-protected-resource/ref-files`) を指す。
+#
+# ippoan の MCP エコシステム (relay = mcp-staging.ippoan.org, connector flow) は
+# **staging の auth-worker** で運用されており、prod (auth.ippoan.org) は `v*`
+# tag でしか deploy されない。よって MCP_RESOURCE_ORIGINS_ALLOWLIST への
+# ref-files 追加 (auth-worker#238) が即時反映されるのは auth-staging 側。
+# connector を即つなげるため staging を AS に指す。
+AUTH_WORKER_ORIGIN = "https://auth-staging.ippoan.org"
 # JWT の `aud` claim 許可リスト (comma-sep)。2 経路を受理する:
 #   - "ref-files-mcp-server-rs"      : legacy relay binary path (auth-worker
 #     `MCP_JWT_AUDIENCE_ALLOWLIST` が device flow で mint する binary 名)。
