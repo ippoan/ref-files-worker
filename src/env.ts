@@ -4,11 +4,31 @@
  * type and stays compatible with the root app's `app.route(...)` mount.
  */
 
+import type { BulkUploadParams } from "./workflows/types";
+
 export interface Env {
   DB: D1Database;
   BLOBS: R2Bucket;
   AUTH_WORKER_ORIGIN: string;
   MCP_JWT_AUDIENCE: string;
+  /**
+   * Public origin advertised in pre-signed `upload_url` / `download_url`
+   * responses. Required because the durable `/mcp` transport re-dispatches
+   * `*-init` calls through the DO with an internal request URL
+   * (`https://ref-files.internal/...`), so `new URL(c.req.url).origin` no
+   * longer reflects the reachable public host. Set to the worker's custom
+   * domain (`https://ref-files.ippoan.org`). Optional so test / direct REST
+   * runs can fall back to the inbound request origin.
+   */
+  PUBLIC_ORIGIN?: string;
+  /**
+   * Durable bulk-upload Workflow binding. `PUT /upload/:token` (kind=tar_gz)
+   * stages the archive in R2 and triggers an instance so the per-file commit
+   * loop runs off the request lifecycle — no 60s client-timeout / partial
+   * commit. Optional: in `WORKER_ENV === "test"` (miniflare has no Workflow
+   * binding) the handler falls back to an inline synchronous commit.
+   */
+  BULK_UPLOAD_WORKFLOW?: Workflow<BulkUploadParams>;
   /**
    * HS256 secret shared with auth-worker.
    *

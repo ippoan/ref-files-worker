@@ -162,7 +162,7 @@ export function registerTools(server: McpServer, dispatch: Dispatch): void {
     "folder_upload_url",
     {
       description:
-        "Issue a pre-signed PUT URL for a tar.gz bulk upload. Use this instead of repeated file_put when uploading many files — the server extracts the tar.gz under base_path and avoids base64 token bloat. Mirror of folder_download_url. Send the archive with `curl -X PUT --data-binary @<bundle.tar.gz> <upload_url>`. base_path = \"\" extracts at the repo root.",
+        "Issue a pre-signed PUT URL for a tar.gz bulk upload. Use this instead of repeated file_put when uploading many files — avoids base64 token bloat. Mirror of folder_download_url. Send the archive with `curl -X PUT --data-binary @<bundle.tar.gz> <upload_url>`. base_path = \"\" extracts at the repo root. The PUT stages the archive and returns 202 `{ workflow_id }`: extraction runs in a durable Workflow off the request lifecycle (no client-timeout / partial-commit), so poll `bulk_upload_status(workflow_id)` until status is `complete`.",
       inputSchema: {
         repo_id: z.string(),
         base_path: z.string().default(""),
@@ -177,6 +177,21 @@ export function registerTools(server: McpServer, dispatch: Dispatch): void {
             base_path,
             message: message ?? null,
           },
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "bulk_upload_status",
+    {
+      description:
+        "Poll the durable Workflow that extracts a folder_upload_url tar.gz. Pass the workflow_id from the 202 PUT response. Returns the instance status (queued|running|complete|errored|...); on `complete`, `output` holds { count, files }.",
+      inputSchema: { workflow_id: z.string() },
+    },
+    async ({ workflow_id }) =>
+      toResult(
+        await dispatch("GET", "/v1/files/bulk-upload-status", {
+          query: { id: workflow_id },
         }),
       ),
   );

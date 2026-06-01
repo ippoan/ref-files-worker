@@ -551,7 +551,7 @@ files.post("/upload-init", async (c) => {
   });
   return c.json(
     {
-      upload_url: buildUploadUrl(originOf(c.req.url), issued.token),
+      upload_url: buildUploadUrl(c.env.PUBLIC_ORIGIN || originOf(c.req.url), issued.token),
       token: issued.token,
       expires_at: issued.expiresAt,
       method: "PUT",
@@ -601,7 +601,7 @@ files.post("/bulk-upload-init", async (c) => {
   });
   return c.json(
     {
-      upload_url: buildUploadUrl(originOf(c.req.url), issued.token),
+      upload_url: buildUploadUrl(c.env.PUBLIC_ORIGIN || originOf(c.req.url), issued.token),
       token: issued.token,
       expires_at: issued.expiresAt,
       method: "PUT",
@@ -609,6 +609,29 @@ files.post("/bulk-upload-init", async (c) => {
     },
     201,
   );
+});
+
+// GET /v1/files/bulk-upload-status — poll a durable bulk-upload Workflow.
+// `id` is the `workflow_id` returned (202) by `PUT /upload/:token` for a
+// tar.gz token. Status / output mirror the Workflows `InstanceStatus`.
+files.get("/bulk-upload-status", async (c) => {
+  const id = c.req.query("id");
+  if (!id) return c.json({ error: "bad_request", reason: "id" }, 400);
+
+  // No Workflow binding (test env / inline mode) — the upload was committed
+  // synchronously at PUT time, so there is no instance to inspect.
+  if (!c.env.BULK_UPLOAD_WORKFLOW) {
+    return c.json({ error: "unavailable", reason: "no_workflow_binding" }, 501);
+  }
+
+  let instance: WorkflowInstance;
+  try {
+    instance = await c.env.BULK_UPLOAD_WORKFLOW.get(id);
+  } catch {
+    return c.json({ error: "not_found", reason: "instance" }, 404);
+  }
+  const status = await instance.status();
+  return c.json({ workflow_id: id, ...status }, 200);
 });
 
 // GET /v1/files/download-url — issue a streaming download URL for one revision
@@ -658,7 +681,7 @@ files.get("/download-url", async (c) => {
   });
   return c.json(
     {
-      download_url: buildDownloadUrl(originOf(c.req.url), issued.token),
+      download_url: buildDownloadUrl(c.env.PUBLIC_ORIGIN || originOf(c.req.url), issued.token),
       token: issued.token,
       expires_at: issued.expiresAt,
       method: "GET",

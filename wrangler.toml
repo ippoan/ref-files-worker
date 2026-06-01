@@ -12,6 +12,12 @@ account_id = "24b45709d060d957340180e995f0d373"
 
 [vars]
 WORKER_ENV = "prod"
+# Public origin advertised in pre-signed upload_url / download_url responses.
+# The durable `/mcp` transport re-dispatches `*-init` calls through the DO with
+# an internal request URL (`https://ref-files.internal/...`), so deriving the
+# origin from `c.req.url` leaks an unreachable host. Pin it to the custom
+# domain instead (Refs #33). Matches the `[[routes]] pattern` below.
+PUBLIC_ORIGIN = "https://ref-files.ippoan.org"
 # MCP OAuth authorization server origin。`/mcp` 401 の WWW-Authenticate
 # `resource_metadata` がこの origin の per-resource metadata
 # (`/.well-known/oauth-protected-resource/ref-files`) を指す。
@@ -117,3 +123,14 @@ class_name = "RefFilesMcp"
 [[migrations]]
 tag = "v2"
 new_sqlite_classes = ["RefFilesMcp"]
+
+# ─── Durable bulk-upload Workflow (Refs #33) ────────────────────────────────
+# `folder_upload_url`'s `PUT /upload/:token` stages the tar.gz in R2 and
+# triggers this Workflow so the per-file commit loop runs off the request
+# lifecycle (no 60s client-timeout / partial commit). Each batch is a
+# durably-checkpointed step, retried independently. Class exported from
+# `src/index.ts` → `src/workflows/bulk-upload.ts`.
+[[workflows]]
+name = "ref-files-bulk-upload"
+binding = "BULK_UPLOAD_WORKFLOW"
+class_name = "BulkUploadWorkflow"

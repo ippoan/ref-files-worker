@@ -10,7 +10,15 @@ import { env } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 
 import app from "../src/app";
+import { db } from "../src/db";
+import type { Env } from "../src/env";
+import { commitTarEntry } from "../src/routes/uploads";
 import { applyMigrations, authHeader } from "./helpers";
+
+// `cloudflare:test`'s `ProvidedEnv` isn't augmented to the worker `Env` in
+// this repo (see the same cast in test/admin.test.ts / test/helpers.ts), so
+// cast once for the direct `commitTarEntry` / `db` calls below.
+const wenv = env as unknown as Env;
 
 beforeAll(applyMigrations);
 
@@ -299,8 +307,101 @@ describe("tar.gz bulk upload", () => {
       ctx,
     );
     expect(put.status).toBe(201);
-    const body = (await put.json()) as { files: Array<{ path: string }> };
+    const body = (await put.json()) as { mode: string; files: Array<{ path: string }> };
+    // No Workflow binding in the test env → synchronous inline commit.
+    expect(body.mode).toBe("inline");
     expect(body.files[0]?.path).toBe("imported/v1/x.md");
+  });
+});
+
+describe("pre-signed URL origin", () => {
+  it("upload_url uses PUBLIC_ORIGIN, not the inbound request host", async () => {
+    const repoId = await initRepo("alice", "origin-a");
+    const init = await app.fetch(
+      new Request("https://internal.invalid/v1/files/upload-init", {
+        method: "POST",
+        headers: h(),
+        body: JSON.stringify({ repo_id: repoId, path: "doc.txt" }),
+      }),
+      env,
+      ctx,
+    );
+    expect(init.status).toBe(201);
+    const { upload_url } = (await init.json()) as { upload_url: string };
+    // Regression guard for the durable-dispatch `ref-files.internal` leak:
+    // the issued URL must be the configured public origin, not the request host.
+    expect(upload_url.startsWith("https://ref-files.test.invalid/upload/")).toBe(true);
+  });
+});
+
+describe("bulk_upload_status (no Workflow binding in test env)", () => {
+  it("missing id → 400", async () => {
+    const res = await app.fetch(
+      new Request("https://x/v1/files/bulk-upload-status", { headers: h() }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { reason: string }).reason).toBe("id");
+  });
+
+  it("with id but no binding → 501 unavailable", async () => {
+    const res = await app.fetch(
+      new Request("https://x/v1/files/bulk-upload-status?id=wf-123", { headers: h() }),
+      env,
+      ctx,
+    );
+    expect(res.status).toBe(501);
+    expect(((await res.json()) as { reason: string }).reason).toBe("no_workflow_binding");
+  });
+});
+
+describe("commitTarEntry idempotency (skipIfSameSha)", () => {
+  it("skips a re-commit of identical bytes, appends a new revision on change", async () => {
+    const repoId = await initRepo("alice", "idem");
+    const base = {
+      basePath: "",
+      repoId,
+      message: null,
+      ownerLogin: "alice",
+      skipIfSameSha: true,
+    } as const;
+    const enc = new TextEncoder();
+
+    const first = await commitTarEntry(db(wenv), wenv, {
+      ...base,
+      entry: { name: "dup.txt", bytes: enc.encode("same") },
+    });
+    expect(first).not.toBeNull();
+    expect(first!.skipped).toBe(false);
+
+    // Same bytes again → idempotent skip, identical revision id.
+    const again = await commitTarEntry(db(wenv), wenv, {
+      ...base,
+      entry: { name: "dup.txt", bytes: enc.encode("same") },
+    });
+    expect(again!.skipped).toBe(true);
+    expect(again!.revision_id).toBe(first!.revision_id);
+
+    // Changed bytes → a fresh revision, not skipped.
+    const changed = await commitTarEntry(db(wenv), wenv, {
+      ...base,
+      entry: { name: "dup.txt", bytes: enc.encode("different") },
+    });
+    expect(changed!.skipped).toBe(false);
+    expect(changed!.revision_id).not.toBe(first!.revision_id);
+  });
+
+  it("returns null for directory / unnamed sentinel entries", async () => {
+    const repoId = await initRepo("alice", "idem-skip");
+    const res = await commitTarEntry(db(wenv), wenv, {
+      basePath: "",
+      repoId,
+      message: null,
+      ownerLogin: "alice",
+      entry: { name: "adir/", bytes: new Uint8Array(0) },
+    });
+    expect(res).toBeNull();
   });
 });
 

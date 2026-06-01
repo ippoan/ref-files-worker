@@ -52,7 +52,7 @@ async function loadFileByPath(
 }
 
 /** Shared "append-or-create revision" core, called per file by both single + tar.gz paths. */
-async function commitRevision(
+export async function commitRevision(
   handle: DB,
   env: AppEnv["Bindings"],
   args: {
@@ -62,8 +62,15 @@ async function commitRevision(
     mime: string | null;
     message: string | null;
     authorLogin: string;
+    /**
+     * When true, skip writing a new revision if the file already exists with
+     * an identical sha256 as its current revision. Used by the durable
+     * bulk-upload Workflow so a step that retries (after a partial failure)
+     * does not append duplicate revisions for files it already committed.
+     */
+    skipIfSameSha?: boolean;
   },
-): Promise<{ file: FileRow; revision: RevisionRow; created: boolean }> {
+): Promise<{ file: FileRow; revision: RevisionRow; created: boolean; skipped: boolean }> {
   const { repoId, path, bytes, mime, message, authorLogin } = args;
   const { parent: parentPath, name } = splitParent(path);
   const folder = await ensureFolderPath(handle, repoId, parentPath);
@@ -73,6 +80,23 @@ async function commitRevision(
 
   const existing = await loadFileByPath(handle, repoId, path);
   if (existing) {
+    if (args.skipIfSameSha) {
+      const curRows = (await handle
+        .select()
+        .from(revisionsTable)
+        .where(
+          and(
+            eq(revisionsTable.fileId, existing.id),
+            eq(revisionsTable.revNumber, existing.currentRevisionNumber),
+          ),
+        )
+        .limit(1)
+        .all()) as RevisionRow[];
+      const cur = curRows[0];
+      if (cur && cur.sha256 === sha) {
+        return { file: existing, revision: cur, created: false, skipped: true };
+      }
+    }
     const revNumber = existing.currentRevisionNumber + 1;
     const revId = crypto.randomUUID();
     const key = blobKey(repoId, existing.id, revNumber);
@@ -118,6 +142,7 @@ async function commitRevision(
       },
       revision: revRow,
       created: false,
+      skipped: false,
     };
   }
 
@@ -165,13 +190,72 @@ async function commitRevision(
     return commitRevision(handle, env, args);
   }
   await handle.insert(revisionsTable).values(revRow).run();
-  return { file: fileRow, revision: revRow, created: true };
+  return { file: fileRow, revision: revRow, created: true, skipped: false };
 }
 
-function joinPath(base: string, rel: string): string {
+export function joinPath(base: string, rel: string): string {
   const cleanRel = rel.replace(/^\/+/, "");
   if (base === "") return cleanRel;
   return `${base}/${cleanRel}`;
+}
+
+/** R2 key under which `PUT /upload/:token` stages a tar.gz for the Workflow. */
+export function stagingKey(token: string): string {
+  return `uploads/staging/${token}`;
+}
+
+/**
+ * Commit one tar entry under `basePath`. Returns null for directory / empty
+ * sentinel entries and unparseable names (mirrors the inline loop's skips).
+ * Shared by the inline fallback and the durable Workflow so the path
+ * normalisation + commit semantics live in one place.
+ */
+export async function commitTarEntry(
+  handle: DB,
+  env: AppEnv["Bindings"],
+  args: {
+    entry: TarEntry;
+    basePath: string;
+    repoId: string;
+    message: string | null;
+    ownerLogin: string;
+    skipIfSameSha?: boolean;
+  },
+): Promise<{
+  path: string;
+  file_id: string;
+  revision_id: string;
+  size: number;
+  sha256: string;
+  skipped: boolean;
+} | null> {
+  const { entry, basePath, repoId, message, ownerLogin, skipIfSameSha } = args;
+  if (entry.bytes.byteLength === 0 && entry.name.endsWith("/")) return null;
+  let rel: string;
+  try {
+    rel = normalizePath(entry.name.replace(/\/+$/, ""));
+  } catch {
+    return null;
+  }
+  if (rel === "") return null;
+  const path = joinPath(basePath, rel);
+  const result = await commitRevision(handle, env, {
+    repoId,
+    path,
+    bytes: entry.bytes,
+    mime: null,
+    message,
+    authorLogin: ownerLogin,
+    skipIfSameSha,
+  });
+  return {
+    path: result.file.path,
+    file_id: result.file.id,
+    revision_id: result.revision.id,
+    size: result.revision.size,
+    sha256: result.revision.sha256,
+    skipped: result.skipped,
+  };
 }
 
 // PUT /upload/:token — consume a pre-signed upload token.
@@ -222,7 +306,46 @@ uploads.put("/upload/:token", async (c) => {
     );
   }
 
-  // tar.gz bulk
+  // tar.gz bulk.
+  let basePath = "";
+  try {
+    basePath = normalizePath(row.path);
+  } catch {
+    basePath = "";
+  }
+
+  // Durable path (prod): stage the raw archive in R2 and hand the per-file
+  // commit loop to a Workflow instance so it runs off the request lifecycle —
+  // no 60s client-timeout / partial-commit (Refs #33). The PUT returns 202
+  // immediately; the caller polls `bulk_upload_status(workflow_id)`.
+  if (c.env.BULK_UPLOAD_WORKFLOW) {
+    const key = stagingKey(token);
+    await c.env.BLOBS.put(key, bytes, {
+      httpMetadata: { contentType: "application/gzip" },
+    });
+    const instance = await c.env.BULK_UPLOAD_WORKFLOW.create({
+      params: {
+        token,
+        repoId: row.repoId,
+        basePath,
+        ownerLogin: row.ownerLogin,
+        message: row.message,
+        stagingKey: key,
+      },
+    });
+    return c.json(
+      {
+        mode: "workflow",
+        workflow_id: instance.id,
+        status: "queued",
+        size: bytes.byteLength,
+      },
+      202,
+    );
+  }
+
+  // Inline fallback (test env / no Workflow binding): commit synchronously and
+  // mark the token consumed, preserving the original `{ files, count }` shape.
   const stream = new Response(bytes).body;
   if (!stream) return c.json({ error: "internal_error", reason: "no_body_stream" }, 500);
   let entries: TarEntry[];
@@ -235,42 +358,19 @@ uploads.put("/upload/:token", async (c) => {
     );
   }
 
-  let basePath = "";
-  try {
-    basePath = normalizePath(row.path);
-  } catch {
-    basePath = "";
-  }
-
-  const results: Array<{ path: string; file_id: string; revision_id: string; size: number; sha256: string }> = [];
+  const results: Array<{ path: string; file_id: string; revision_id: string; size: number; sha256: string; skipped: boolean }> = [];
   for (const entry of entries) {
-    if (entry.bytes.byteLength === 0 && entry.name.endsWith("/")) continue;
-    let rel: string;
-    try {
-      rel = normalizePath(entry.name.replace(/\/+$/, ""));
-    } catch {
-      continue;
-    }
-    if (rel === "") continue;
-    const path = joinPath(basePath, rel);
-    const result = await commitRevision(handle, c.env, {
+    const committed = await commitTarEntry(handle, c.env, {
+      entry,
+      basePath,
       repoId: row.repoId,
-      path,
-      bytes: entry.bytes,
-      mime: null,
       message: row.message,
-      authorLogin: row.ownerLogin,
+      ownerLogin: row.ownerLogin,
     });
-    results.push({
-      path: result.file.path,
-      file_id: result.file.id,
-      revision_id: result.revision.id,
-      size: result.revision.size,
-      sha256: result.revision.sha256,
-    });
+    if (committed) results.push(committed);
   }
   await markConsumed(handle, token);
-  return c.json({ files: results, count: results.length }, 201);
+  return c.json({ mode: "inline", files: results, count: results.length }, 201);
 });
 
 // GET /download/:token — stream a single revision's bytes.
