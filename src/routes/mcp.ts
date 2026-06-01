@@ -1,32 +1,21 @@
 /**
- * `/mcp` — native Streamable HTTP MCP endpoint.
+ * MCP tool registry — shared between the durable (DO+WS) `/mcp` transport
+ * (`src/durable.ts`) and any future stateless surface.
  *
- * Until now the only MCP surface for ref-files was the out-of-process
- * `ref-files-mcp-server-rs` binary, which calls the `/v1/*` REST routes over
- * the network. This module lets the worker speak MCP itself: it borrows
- * `createWorkerMcp` from `@ippoan/mcp-cf-workers` (one `McpServer` +
- * `WebStandardStreamableHTTPServerTransport` per request, stateless) and
- * registers the same set of tools as MCP tools.
- *
- * To avoid duplicating the D1 / R2 business logic, each tool handler
- * **re-dispatches through the existing `/v1/*` Hono routes** with the caller's
- * bearer token. The `/mcp` route is gated by the same `mcpAuth` middleware as
- * `/v1/*`, and the internal sub-request re-verifies the JWT, so authorization
- * (owner scoping, scope checks) stays in exactly one place.
+ * Each tool handler **re-dispatches through the existing `/v1/*` Hono routes**
+ * via the `Dispatch` callback so the D1 / R2 business logic and owner scoping
+ * live in exactly one place. The caller wires `dispatch` to either an internal
+ * `app.fetch(...)` (durable path, see `src/durable.ts`) or a Service Binding.
  *
  * Auth: identical to `/v1/*` — HS256 MCP-JWT (`MCP_JWT_SECRET` shared with
- * auth-worker). The `mcpJwtMiddleware` helper that ships in
- * `@ippoan/mcp-cf-workers@>=0.3` is the framework-agnostic equivalent of the
- * `mcpAuth` middleware reused here.
+ * auth-worker). The dispatch wrapper attaches the caller's bearer so the
+ * `/v1/*` middleware re-verifies the JWT on every sub-request.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { Context, Hono } from "hono";
 import { z } from "zod";
 
-import type { AppEnv, Env } from "../env";
-
 /** Dispatch an internal request through the worker's own `/v1/*` routes. */
-type Dispatch = (
+export type Dispatch = (
   method: "GET" | "POST" | "DELETE",
   path: string,
   opts?: { query?: Record<string, string | undefined>; body?: unknown },
@@ -46,7 +35,7 @@ function toResult(res: { status: number; json: unknown }): ToolResult {
   };
 }
 
-function buildQuery(query?: Record<string, string | undefined>): string {
+export function buildQuery(query?: Record<string, string | undefined>): string {
   if (!query) return "";
   const params = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
@@ -56,7 +45,7 @@ function buildQuery(query?: Record<string, string | undefined>): string {
   return s ? `?${s}` : "";
 }
 
-function registerTools(server: McpServer, dispatch: Dispatch): void {
+export function registerTools(server: McpServer, dispatch: Dispatch): void {
   server.registerTool(
     "repo_init",
     {
@@ -303,49 +292,3 @@ function registerTools(server: McpServer, dispatch: Dispatch): void {
   );
 }
 
-/**
- * Hono handler for `POST /mcp`. `app` is the root app, reused for internal
- * `/v1/*` dispatch. Auth is enforced by `mcpAuth` mounted on `/mcp` upstream,
- * and again on each internal sub-request.
- */
-export async function handleMcp(c: Context<AppEnv>, app: Hono<AppEnv>): Promise<Response> {
-  const authHeader = c.req.header("Authorization") ?? "";
-
-  const dispatch: Dispatch = async (method, path, opts) => {
-    const url = `https://ref-files.internal${path}${buildQuery(opts?.query)}`;
-    const headers: Record<string, string> = { Authorization: authHeader };
-    const init: RequestInit = { method, headers };
-    if (opts?.body !== undefined) {
-      headers["Content-Type"] = "application/json";
-      init.body = JSON.stringify(opts.body);
-    }
-    // No ExecutionContext is forwarded: the `/v1/*` tool routes are fully
-    // synchronous (no `waitUntil`), and `c.executionCtx` throws in test envs.
-    const res = await app.fetch(new Request(url, init), c.env);
-    const raw = await res.text();
-    let json: unknown;
-    try {
-      json = raw ? JSON.parse(raw) : null;
-    } catch {
-      json = raw;
-    }
-    return { status: res.status, json };
-  };
-
-  // Dynamic import: `createWorkerMcp` pulls in `@modelcontextprotocol/sdk`'s
-  // `McpServer`, which eagerly imports `ajv`. Loading that at module-eval time
-  // would break every worker test under `@cloudflare/vitest-pool-workers`
-  // (workerd's module fallback can't resolve ajv's nested `./refs/data.json`).
-  // Deferring it to the first `/mcp` request keeps the rest of the worker —
-  // and its test suite — clean; the production bundle (esbuild) inlines ajv
-  // normally.
-  const { createWorkerMcp } = await import("@ippoan/mcp-cf-workers");
-
-  const handler = createWorkerMcp<Env>({
-    name: "ref-files",
-    version: "0.1.0",
-    registerTools: (server) => registerTools(server, dispatch),
-  });
-
-  return handler(c.req.raw, c.env);
-}

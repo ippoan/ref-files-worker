@@ -95,3 +95,19 @@ secret_name = "INTERNAL_SHARED_SECRET"
 binding = "MCP_JWT_SECRET"
 store_id = "bd7bc91a3e5f4111add4acf6cb4b8733"
 secret_name = "INTERNAL_SHARED_SECRET"
+
+# ─── Durable Object for `/mcp` (durable MCP transport, Refs #31) ────────────
+# `RefFilesMcp` (src/durable.ts) wraps the agents-SDK McpAgent inside a DO
+# so the `/mcp` WebSocket survives deploys via reconnect (Gate A) and can
+# push `notifications/tools/list_changed` once the client side reads them
+# (Gate B — anthropics/claude-code#13646).
+#
+# The class is registered as a SQLite-backed DO because McpAgent persists
+# session state (props, initialize request) in DO SQLite storage.
+[[durable_objects.bindings]]
+name = "MCP_OBJECT"
+class_name = "RefFilesMcp"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RefFilesMcp"]
