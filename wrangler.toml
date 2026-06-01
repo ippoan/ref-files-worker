@@ -14,6 +14,24 @@ AUTH_WORKER_ORIGIN = "https://auth.ippoan.org"
 # (Refs ippoan/ref-files-worker#6 smoke 結果)。
 MCP_JWT_AUDIENCE = "ref-files-mcp-server-rs"
 
+# ─── Cloudflare Access (人間向け /ui/* surface) ─────────────────────────────
+# `/ui/*` は MCP JWT ではなく Cloudflare Access (Zero Trust SSO) で守る。
+# `/v1/*` (MCP server 機械アクセス) は従来どおり HS256 JWT のまま — 二重認証を
+# 避けるため Access は `/ui/*` path にだけ application を被せる。
+#
+# Zero Trust dashboard 側の設定 (コード化されない手順):
+#   1. Access → Applications → Add → Self-hosted
+#   2. Application domain: `ref-files.ippoan.org`  Path: `/ui`
+#   3. Policy: 許可する identity (例: Google group / email allowlist)
+#   4. 作成後に発行される **Application Audience (AUD) tag** を下の
+#      `CF_ACCESS_AUD` に貼る。
+#
+# `CF_ACCESS_TEAM_DOMAIN` は team の Access ドメイン (`<team>.cloudflareaccess.com`)。
+# worker は `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` の JWKS で
+# `Cf-Access-Jwt-Assertion` の RS256 署名を検証する (src/lib/cf-access-jwt.ts)。
+CF_ACCESS_TEAM_DOMAIN = "ippoan.cloudflareaccess.com"
+CF_ACCESS_AUD = ""  # ← Access Application 作成後に AUD tag を設定
+
 [observability]
 enabled = true
 head_sampling_rate = 1

@@ -34,6 +34,17 @@ export interface Env {
    */
   INTERNAL_SHARED_SECRET?: string | SecretsStoreSecret;
   WORKER_ENV: string;
+  /**
+   * Cloudflare Access team domain for the human-facing `/ui/*` surface —
+   * e.g. `ippoan.cloudflareaccess.com`. The JWKS used to verify the
+   * `Cf-Access-Jwt-Assertion` header is fetched from
+   * `https://<CF_ACCESS_TEAM_DOMAIN>/cdn-cgi/access/certs`.
+   * Optional: omitted only in `WORKER_ENV === "test"` (see
+   * `src/middleware/cf-access.ts` test branch).
+   */
+  CF_ACCESS_TEAM_DOMAIN?: string;
+  /** AUD tag of the Access Application protecting `/ui/*`. */
+  CF_ACCESS_AUD?: string;
 }
 
 /** Auth claims attached by the `/v1/*` middleware in `src/index.ts`. */
@@ -43,8 +54,15 @@ export interface AuthContext {
   scope: string;
 }
 
+/** Cloudflare Access identity attached by the `/ui/*` middleware. */
+export interface AccessUser {
+  email: string;
+  sub: string;
+}
+
 export interface Variables {
   auth: AuthContext;
+  accessUser: AccessUser;
 }
 
 export type AppEnv = { Bindings: Env; Variables: Variables };

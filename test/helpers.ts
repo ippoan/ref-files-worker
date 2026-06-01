@@ -66,3 +66,28 @@ export const authHeader = (claims?: Parameters<typeof mintToken>[0]) => ({
   Authorization: `Bearer ${mintToken(claims ?? {})}`,
   "Content-Type": "application/json",
 });
+
+/**
+ * Mint a Cloudflare Access-shaped assertion for the `/ui/*` surface. In
+ * `WORKER_ENV=test` the cf-access middleware trusts the unsigned payload
+ * (mirrors `mintToken` for the MCP JWT path), so we just need 3 b64url
+ * segments carrying an `email` claim.
+ */
+export function mintAccessToken(claims: { email?: string; sub?: string }): string {
+  const header = b64url(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "test-kid" }));
+  const payload = b64url(
+    JSON.stringify({
+      email: claims.email ?? "admin@example.com",
+      sub: claims.sub ?? "access-sub-1",
+      aud: ["test-aud"],
+      iss: "https://ippoan.cloudflareaccess.com",
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    }),
+  );
+  return `${header}.${payload}.sig`;
+}
+
+/** Header carrying the Access assertion, as Access forwards it to the origin. */
+export const accessHeader = (claims?: Parameters<typeof mintAccessToken>[0]) => ({
+  "Cf-Access-Jwt-Assertion": mintAccessToken(claims ?? {}),
+});
