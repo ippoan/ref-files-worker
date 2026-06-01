@@ -6,8 +6,9 @@
  *   - alg pinned to HS256 (header.alg compared in constant time)
  *   - signature recomputed via HMAC-SHA256 and constant-time compared
  *   - aud ∈ expectedAudience (single value, or a comma-separated allowlist /
- *     string[]: the OAuth connector path mints `aud = https://ref-files.ippoan.org`
- *     (RFC 8707 resource) while the legacy relay binary uses `ref-files-mcp-server-rs`)
+ *     string[]). A `"*"` entry disables the aud check entirely (accept any
+ *     audience) — used because the claude.ai connector mints a varying `aud`
+ *     and the shared-secret signature already proves auth-worker minted it.
  *   - exp > now (with 30s skew)
  *   - nbf <= now (with 30s skew) if present
  *
@@ -103,7 +104,18 @@ export async function verifyMcpJwt(
   if (typeof claims.nbf === "number" && claims.nbf - SKEW_SECONDS > now) {
     throw new JwtVerifyError("not_yet_valid");
   }
-  if (typeof claims.aud !== "string" || !allowedAudiences.includes(claims.aud)) {
+  // `"*"` in the allowlist = accept any audience. The shared HS256 secret has
+  // already proven auth-worker minted this token; the canonical identity is
+  // `github_login`, not `aud`. The claude.ai connector mints a varying `aud`
+  // (the RFC 8707 resource URL when sent, else the ecosystem default
+  // `github-mcp-server-rs`), so pinning a fixed `aud` would reject valid
+  // connector tokens. This mirrors security-inventory, which delegates to
+  // `/mcp/introspect` and does not enforce `aud` — but stays local (no
+  // per-request round-trip, which matters because `/mcp` re-dispatches each
+  // tool call through `/v1/*`). Confused-deputy tradeoff is the same one
+  // security-inventory already accepts (Refs ippoan/secrets-inventory#43).
+  const anyAudience = allowedAudiences.includes("*");
+  if (!anyAudience && (typeof claims.aud !== "string" || !allowedAudiences.includes(claims.aud))) {
     throw new JwtVerifyError("audience");
   }
   if (typeof claims.sub !== "string" || claims.sub.length === 0) {
