@@ -95,6 +95,9 @@ describe("GET /ui/inventory — HTML view", () => {
     expect(body).toContain("<details");
     expect(body).toContain(">docs<");
     expect(body).toContain(">readme.md<");
+    // folders carry a data-key (repoId:path) so the client can persist
+    // open/closed state to localStorage
+    expect(body).toMatch(/data-key="[^"]+:docs"/);
   });
 
   it("renders HTML when the client sends a browser Accept header", async () => {
