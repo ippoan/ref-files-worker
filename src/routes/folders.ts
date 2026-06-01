@@ -173,7 +173,7 @@ folders.get("/download-url", async (c) => {
   });
   return c.json(
     {
-      download_url: buildDownloadUrl(originOf(c.req.url), issued.token),
+      download_url: buildDownloadUrl(c.env.PUBLIC_ORIGIN || originOf(c.req.url), issued.token),
       token: issued.token,
       expires_at: issued.expiresAt,
       method: "GET",

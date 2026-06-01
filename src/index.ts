@@ -16,10 +16,15 @@
 import app from "./app";
 import { mcpFetch, RefFilesMcp } from "./durable";
 import type { Env } from "./env";
+import { BulkUploadWorkflow } from "./workflows/bulk-upload";
 
 // Re-exported so wrangler picks the Durable Object class up via the
 // `class_name = "RefFilesMcp"` binding in wrangler.toml.
 export { RefFilesMcp };
+
+// Re-exported so wrangler picks the Workflow class up via the
+// `class_name = "BulkUploadWorkflow"` entry in wrangler.toml ([[workflows]]).
+export { BulkUploadWorkflow };
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

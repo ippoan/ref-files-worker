@@ -16,7 +16,12 @@ export default defineWorkersConfig({
       reporter: ["text", "json-summary", "lcov"],
       reportsDirectory: "./coverage",
       include: ["src/**/*.ts"],
-      exclude: ["src/types/**", "src/db/schema.ts", "src/index.ts"],
+      // `src/index.ts` and `src/workflows/**` are runtime glue that requires
+      // a real Workers / Workflows runtime (the vitest-pool-workers isolate
+      // has no Workflow binding), so they can't be unit-tested here. The
+      // per-file commit logic the Workflow drives IS covered via
+      // `commitTarEntry` in test/uploads.test.ts.
+      exclude: ["src/types/**", "src/db/schema.ts", "src/index.ts", "src/workflows/**"],
     },
     poolOptions: {
       workers: {
@@ -30,6 +35,11 @@ export default defineWorkersConfig({
             AUTH_WORKER_ORIGIN: "https://auth.test.invalid",
             MCP_JWT_AUDIENCE: "https://ref-files.test.invalid",
             INTERNAL_SHARED_SECRET: "test-internal-shared-secret",
+            // Pre-signed URLs advertise this origin (mirrors prod's custom
+            // domain) instead of the inbound request host — see PUBLIC_ORIGIN
+            // in src/env.ts. No Workflow binding here, so PUT /upload/:token
+            // (tar.gz) takes the inline-commit fallback.
+            PUBLIC_ORIGIN: "https://ref-files.test.invalid",
           },
         },
       },
