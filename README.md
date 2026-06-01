@@ -54,6 +54,15 @@ stateless). A client can point straight at `https://ref-files.ippoan.org/mcp`
   `/mcp` path, so it never gates the separate `/mcp/introspect` route).
   `@ippoan/mcp-cf-workers@>=0.3` ships `mcpJwtMiddleware`, the
   framework-agnostic equivalent of `mcpAuth`.
+- **OAuth connector** — every 401 carries an RFC 6750 + RFC 9728
+  `WWW-Authenticate: Bearer realm="MCP", resource_metadata="<auth-worker>/.well-known/oauth-protected-resource/ref-files"`
+  challenge, so the claude.ai "Add custom connector" flow auto-discovers the
+  authorization server (auth-worker), does Dynamic Client Registration, and
+  mints a token. `MCP_JWT_AUDIENCE` is a comma-separated allowlist accepting
+  **both** `ref-files-mcp-server-rs` (legacy relay binary) and the RFC 8707
+  resource URL `https://ref-files.ippoan.org` (what the connector mints).
+  Requires `https://ref-files.ippoan.org` in auth-worker's
+  `MCP_RESOURCE_ORIGINS_ALLOWLIST`.
 - **Tools** — all nine `/v1` tools plus `repos_list` / `inventory` are
   registered (`repo_init`, `repos_list`, `folder_create`, `folder_list`,
   `file_put`, `file_get`, `file_history`, `file_move`, `file_delete`,

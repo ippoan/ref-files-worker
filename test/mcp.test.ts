@@ -58,6 +58,13 @@ describe("POST /mcp (routing + auth)", () => {
       ctx,
     );
     expect(res.status).toBe(401);
+    // RFC 6750 + RFC 9728 challenge so the claude.ai connector can discover the AS.
+    // (origin comes from AUTH_WORKER_ORIGIN — auth.test.invalid in the test env.)
+    const challenge = res.headers.get("WWW-Authenticate");
+    expect(challenge).toContain("Bearer");
+    expect(challenge).toContain(
+      "/.well-known/oauth-protected-resource/ref-files",
+    );
   });
 
   it("does not shadow /mcp/introspect", async () => {

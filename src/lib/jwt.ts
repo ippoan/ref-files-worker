@@ -5,7 +5,9 @@
  * Verified claims:
  *   - alg pinned to HS256 (header.alg compared in constant time)
  *   - signature recomputed via HMAC-SHA256 and constant-time compared
- *   - aud === expectedAudience
+ *   - aud ∈ expectedAudience (single value, or a comma-separated allowlist /
+ *     string[]: the OAuth connector path mints `aud = https://ref-files.ippoan.org`
+ *     (RFC 8707 resource) while the legacy relay binary uses `ref-files-mcp-server-rs`)
  *   - exp > now (with 30s skew)
  *   - nbf <= now (with 30s skew) if present
  *
@@ -56,8 +58,13 @@ function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
 export async function verifyMcpJwt(
   token: string,
   secret: string,
-  expectedAudience: string,
+  expectedAudience: string | readonly string[],
 ): Promise<McpJwtClaims> {
+  const allowedAudiences = (
+    Array.isArray(expectedAudience) ? expectedAudience : String(expectedAudience).split(",")
+  )
+    .map((a) => a.trim())
+    .filter((a) => a.length > 0);
   const parts = token.split(".");
   if (parts.length !== 3) throw new JwtVerifyError("shape");
   const [headerB64, payloadB64, sigB64] = parts;
@@ -96,7 +103,9 @@ export async function verifyMcpJwt(
   if (typeof claims.nbf === "number" && claims.nbf - SKEW_SECONDS > now) {
     throw new JwtVerifyError("not_yet_valid");
   }
-  if (claims.aud !== expectedAudience) throw new JwtVerifyError("audience");
+  if (typeof claims.aud !== "string" || !allowedAudiences.includes(claims.aud)) {
+    throw new JwtVerifyError("audience");
+  }
   if (typeof claims.sub !== "string" || claims.sub.length === 0) {
     throw new JwtVerifyError("sub");
   }

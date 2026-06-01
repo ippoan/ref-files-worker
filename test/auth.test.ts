@@ -73,6 +73,25 @@ describe("verifyMcpJwt", () => {
     await expect(verifyMcpJwt(tok, "s3cret", AUD)).rejects.toMatchObject({ reason: "audience" });
   });
 
+  it("accepts any aud in a comma-separated allowlist (binary name OR resource URL)", async () => {
+    const allow = "ref-files-mcp-server-rs,https://ref-files.ippoan.org";
+    const binTok = await mintSigned("s3cret", { aud: "ref-files-mcp-server-rs" });
+    expect((await verifyMcpJwt(binTok, "s3cret", allow)).aud).toBe("ref-files-mcp-server-rs");
+    const urlTok = await mintSigned("s3cret", { aud: "https://ref-files.ippoan.org" });
+    expect((await verifyMcpJwt(urlTok, "s3cret", allow)).aud).toBe("https://ref-files.ippoan.org");
+    const badTok = await mintSigned("s3cret", { aud: "https://evil.invalid" });
+    await expect(verifyMcpJwt(badTok, "s3cret", allow)).rejects.toMatchObject({ reason: "audience" });
+  });
+
+  it("accepts an aud allowlist passed as string[]", async () => {
+    const tok = await mintSigned("s3cret", { aud: "https://ref-files.ippoan.org" });
+    const claims = await verifyMcpJwt(tok, "s3cret", [
+      "ref-files-mcp-server-rs",
+      "https://ref-files.ippoan.org",
+    ]);
+    expect(claims.github_login).toBe("alice");
+  });
+
   it("rejects an unsigned (alg=none) token", async () => {
     const header = b64url(JSON.stringify({ alg: "none", typ: "JWT" }));
     const payload = b64url(JSON.stringify({ sub: "x", github_login: "x", aud: AUD, exp: Math.floor(Date.now() / 1000) + 60 }));
