@@ -11,7 +11,7 @@ import { and, eq } from "drizzle-orm";
 import type { DB } from "../db";
 import { pendingUploads } from "../db/schema";
 
-export type PendingKind = "single" | "tar_gz" | "download";
+export type PendingKind = "single" | "tar_gz" | "download" | "tar_gz_folder";
 
 const TOKEN_BYTES = 32;
 const DEFAULT_TTL_SEC = 600; // 10 min

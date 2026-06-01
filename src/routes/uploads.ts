@@ -9,8 +9,8 @@
  *   - `PUT /upload/:token`  — raw bytes (single) or tar.gz bytes (bulk).
  *   - `GET /download/:token` — streams the matching R2 blob.
  */
-import { Hono } from "hono";
-import { and, eq } from "drizzle-orm";
+import { Hono, type Context } from "hono";
+import { and, eq, isNull, like } from "drizzle-orm";
 
 import type { AppEnv } from "../env";
 import { db, type DB } from "../db";
@@ -19,9 +19,9 @@ import {
   revisions as revisionsTable,
 } from "../db/schema";
 import { sha256Hex } from "../lib/hash";
-import { normalizePath, PathError, splitParent } from "../lib/path";
+import { escapeLike, normalizePath, PathError, splitParent } from "../lib/path";
 import { ensureFolderPath, ensureRepoOwned } from "../lib/repo-ops";
-import { parseTarGz, type TarEntry } from "../lib/tar";
+import { buildTar, parseTarGz, type TarEntry, type TarWriteEntry } from "../lib/tar";
 import { loadToken, markConsumed } from "../lib/upload-token";
 
 import {
@@ -285,6 +285,9 @@ uploads.get("/download/:token", async (c) => {
     return c.json({ error: "gone", reason: loaded.reason }, status);
   }
   const row = loaded.row;
+  if (row.kind === "tar_gz_folder") {
+    return streamFolderTarGz(c, handle, row);
+  }
   if (row.kind !== "download") {
     return c.json({ error: "bad_request", reason: "wrong_kind" }, 400);
   }
@@ -323,3 +326,75 @@ uploads.get("/download/:token", async (c) => {
   headers.set("X-Sha256", rev.sha256);
   return new Response(obj.body, { status: 200, headers });
 });
+
+/**
+ * kind=`tar_gz_folder`: stream every live file under `row.path` (recursive)
+ * as a single tar.gz. Paths inside the archive are repo-relative (so
+ * `tar xzf -` reproduces the same layout the caller would see from
+ * folder_list recursive=true).
+ */
+async function streamFolderTarGz(
+  c: Context<AppEnv>,
+  handle: DB,
+  row: { token: string; repoId: string; path: string; ownerLogin: string },
+): Promise<Response> {
+  let path: string;
+  try {
+    path = normalizePath(row.path);
+  } catch (err) {
+    return c.json({ error: "bad_request", reason: (err as PathError).reason ?? "path" }, 400);
+  }
+
+  const repo = await ensureRepoOwned(handle, row.repoId, row.ownerLogin);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
+
+  let fileRows: FileRow[];
+  if (path === "") {
+    fileRows = (await handle
+      .select()
+      .from(filesTable)
+      .where(and(eq(filesTable.repoId, row.repoId), isNull(filesTable.deletedAt)))
+      .all()) as FileRow[];
+  } else {
+    const likeExpr = `${escapeLike(`${path}/`)}%`;
+    fileRows = (await handle
+      .select()
+      .from(filesTable)
+      .where(
+        and(
+          eq(filesTable.repoId, row.repoId),
+          like(filesTable.path, likeExpr),
+          isNull(filesTable.deletedAt),
+        ),
+      )
+      .all()) as FileRow[];
+  }
+
+  const entries: TarWriteEntry[] = [];
+  for (const file of fileRows) {
+    const obj = await c.env.BLOBS.get(
+      blobKey(file.repoId, file.id, file.currentRevisionNumber),
+    );
+    if (!obj) continue; // blob lost — skip rather than fail the whole archive
+    const ab = await obj.arrayBuffer();
+    // Strip the requested folder prefix so the archive is rooted at the
+    // download target (matches `tar -czf out.tgz -C parent folder/`).
+    const archiveName = path === "" ? file.path : file.path.slice(path.length + 1);
+    entries.push({ name: archiveName, bytes: new Uint8Array(ab) });
+  }
+
+  const tarBytes = buildTar(entries);
+  const gz = new Response(tarBytes).body!.pipeThrough(new CompressionStream("gzip"));
+  await markConsumed(handle, row.token);
+
+  const filename = path === "" ? "repo.tar.gz" : `${path.split("/").pop()}.tar.gz`;
+  const headers = new Headers();
+  headers.set("Content-Type", "application/gzip");
+  headers.set(
+    "Content-Disposition",
+    `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+  );
+  headers.set("X-File-Count", String(entries.length));
+  headers.set("Cache-Control", "private, max-age=60");
+  return new Response(gz, { status: 200, headers });
+}

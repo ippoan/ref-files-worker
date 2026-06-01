@@ -17,9 +17,18 @@ import {
   folderRowToDto,
   loadFolderByPath,
 } from "../lib/repo-ops";
+import { buildDownloadUrl, issueToken } from "../lib/upload-token";
 import type { FolderCreateArgs } from "../types/FolderCreateArgs";
 import type { FolderListing } from "../types/FolderListing";
 import { fileRowToDto, type FileRow } from "./files";
+
+function originOf(reqUrl: string): string {
+  try {
+    return new URL(reqUrl).origin;
+  } catch {
+    return "";
+  }
+}
 
 export const folders = new Hono<AppEnv>();
 
@@ -131,4 +140,45 @@ folders.get("/", async (c) => {
     files: fileRows.map(fileRowToDto),
   };
   return c.json(body, 200);
+});
+
+// GET /v1/folders/download-url — issue a streaming tar.gz of folder + subtree.
+folders.get("/download-url", async (c) => {
+  const repoId = c.req.query("repo_id");
+  const rawPath = c.req.query("path") ?? "";
+  if (!repoId) return c.json({ error: "bad_request", reason: "repo_id" }, 400);
+
+  let path: string;
+  try {
+    path = normalizePath(rawPath);
+  } catch (err) {
+    return c.json({ error: "bad_request", reason: (err as PathError).reason ?? "path" }, 400);
+  }
+
+  const handle = db(c.env);
+  const auth = c.get("auth");
+  const repo = await ensureRepoOwned(handle, repoId, auth.github_login);
+  if ("error" in repo) return c.json(repo, repo.error === "forbidden" ? 403 : 404);
+
+  if (path !== "") {
+    const folder = await loadFolderByPath(handle, repoId, path);
+    if (!folder) return c.json({ error: "not_found", reason: "folder" }, 404);
+  }
+
+  const issued = await issueToken(handle, {
+    kind: "tar_gz_folder",
+    repoId,
+    path,
+    ownerLogin: auth.github_login,
+  });
+  return c.json(
+    {
+      download_url: buildDownloadUrl(originOf(c.req.url), issued.token),
+      token: issued.token,
+      expires_at: issued.expiresAt,
+      method: "GET",
+      content_type: "application/gzip",
+    },
+    201,
+  );
 });

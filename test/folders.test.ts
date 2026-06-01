@@ -80,6 +80,121 @@ describe("folder_create", () => {
   });
 });
 
+describe("folder_download_url", () => {
+  async function seed(login: string, repo: string): Promise<string> {
+    const repoId = await initRepo(login, repo);
+    const h = authHeader({ github_login: login });
+    for (const [path, body] of [
+      ["a/b/hello.txt", "hi"],
+      ["a/b/c/deep.txt", "deeper"],
+      ["a/sibling.md", "# top"],
+    ] as const) {
+      await worker.fetch(
+        new Request("https://x/v1/files", {
+          method: "POST",
+          headers: h,
+          body: JSON.stringify({ repo_id: repoId, path, content_base64: btoa(body) }),
+        }),
+        env,
+        ctx,
+      );
+    }
+    return repoId;
+  }
+
+  it("issues a download-url and streams a tar.gz of the subtree", async () => {
+    const repoId = await seed("alice", "fd-a");
+    const h = authHeader({ github_login: "alice" });
+    const issue = await worker.fetch(
+      new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=a/b`, { headers: h }),
+      env,
+      ctx,
+    );
+    expect(issue.status).toBe(201);
+    const body = (await issue.json()) as { download_url: string; token: string; content_type: string };
+    expect(body.content_type).toBe("application/gzip");
+    expect(body.download_url).toMatch(/\/download\//);
+
+    const dl = await worker.fetch(new Request(`https://x/download/${body.token}`), env, ctx);
+    expect(dl.status).toBe(200);
+    expect(dl.headers.get("Content-Type")).toBe("application/gzip");
+    expect(dl.headers.get("X-File-Count")).toBe("2");
+    const decompressed = dl.body!.pipeThrough(new DecompressionStream("gzip"));
+    const { parseTar } = await import("../src/lib/tar");
+    const tarBuf = new Uint8Array(await new Response(decompressed).arrayBuffer());
+    const entries = parseTar(tarBuf);
+    expect(entries.map((e) => e.name).sort()).toEqual(["c/deep.txt", "hello.txt"]);
+    const map = new Map(entries.map((e) => [e.name, new TextDecoder().decode(e.bytes)]));
+    expect(map.get("hello.txt")).toBe("hi");
+    expect(map.get("c/deep.txt")).toBe("deeper");
+  });
+
+  it("supports root path = whole repo", async () => {
+    const repoId = await seed("alice", "fd-root");
+    const h = authHeader({ github_login: "alice" });
+    const issue = await worker.fetch(
+      new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=`, { headers: h }),
+      env,
+      ctx,
+    );
+    expect(issue.status).toBe(201);
+    const { token } = (await issue.json()) as { token: string };
+    const dl = await worker.fetch(new Request(`https://x/download/${token}`), env, ctx);
+    expect(dl.status).toBe(200);
+    expect(dl.headers.get("X-File-Count")).toBe("3");
+  });
+
+  it("404 on missing folder", async () => {
+    const repoId = await initRepo("alice", "fd-missing");
+    const r = await worker.fetch(
+      new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=nope`, {
+        headers: authHeader({ github_login: "alice" }),
+      }),
+      env,
+      ctx,
+    );
+    expect(r.status).toBe(404);
+  });
+
+  it("rejects missing repo_id", async () => {
+    const r = await worker.fetch(
+      new Request("https://x/v1/folders/download-url", { headers: authHeader() }),
+      env,
+      ctx,
+    );
+    expect(r.status).toBe(400);
+  });
+
+  it("forbids cross-owner download", async () => {
+    const repoId = await seed("alice", "fd-cross");
+    const r = await worker.fetch(
+      new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=a`, {
+        headers: authHeader({ github_login: "mallory" }),
+      }),
+      env,
+      ctx,
+    );
+    expect(r.status).toBe(403);
+  });
+
+  it("token consumed after first GET", async () => {
+    const repoId = await seed("alice", "fd-consume");
+    const issue = await worker.fetch(
+      new Request(`https://x/v1/folders/download-url?repo_id=${repoId}&path=a`, {
+        headers: authHeader({ github_login: "alice" }),
+      }),
+      env,
+      ctx,
+    );
+    const { token } = (await issue.json()) as { token: string };
+    const first = await worker.fetch(new Request(`https://x/download/${token}`), env, ctx);
+    expect(first.status).toBe(200);
+    await first.arrayBuffer();
+    const second = await worker.fetch(new Request(`https://x/download/${token}`), env, ctx);
+    expect(second.status).toBe(410);
+  });
+});
+
 describe("folder_list recursive", () => {
   it("returns nested folders + files when recursive=true", async () => {
     const repoId = await initRepo("alice", "fl-r");
