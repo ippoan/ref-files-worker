@@ -83,16 +83,18 @@ describe("GET /ui/inventory (Cloudflare Access)", () => {
 });
 
 describe("GET /ui/inventory — HTML view", () => {
-  it("renders an HTML table for ?format=html", async () => {
+  it("renders an HTML folder tree for ?format=html", async () => {
     await seed("html-u", "htmlrepo", "docs/readme.md", "hi");
     const res = await uiInventory(accessHeader(), "?format=html");
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toContain("text/html");
     const body = await res.text();
     expect(body).toContain("ref-files inventory");
-    expect(body).toContain("<table");
     expect(body).toContain("htmlrepo");
-    expect(body).toContain("docs/readme.md");
+    // path split into a <details> folder ("docs") + a file leaf ("readme.md")
+    expect(body).toContain("<details");
+    expect(body).toContain(">docs<");
+    expect(body).toContain(">readme.md<");
   });
 
   it("renders HTML when the client sends a browser Accept header", async () => {
