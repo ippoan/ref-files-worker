@@ -6,7 +6,7 @@
  * the network. This module lets the worker speak MCP itself: it borrows
  * `createWorkerMcp` from `@ippoan/mcp-cf-workers` (one `McpServer` +
  * `WebStandardStreamableHTTPServerTransport` per request, stateless) and
- * registers the same nine tools as MCP tools.
+ * registers the same set of tools as MCP tools.
  *
  * To avoid duplicating the D1 / R2 business logic, each tool handler
  * **re-dispatches through the existing `/v1/*` Hono routes** with the caller's
@@ -121,7 +121,7 @@ function registerTools(server: McpServer, dispatch: Dispatch): void {
     "file_put",
     {
       description:
-        "Append a new revision (or create the file at rev 1). content_base64 is the raw file bytes, base64-encoded.",
+        "Append a new revision (or create the file at rev 1). content_base64 is the raw file bytes, base64-encoded. Prefer `file_upload_url` (single file) or `folder_upload_url` (tar.gz bulk) when the payload exceeds a few hundred KB — base64 in JSON blows up assistant output tokens.",
       inputSchema: {
         repo_id: z.string(),
         path: z.string(),
@@ -138,6 +138,54 @@ function registerTools(server: McpServer, dispatch: Dispatch): void {
             path,
             content_base64,
             mime: mime ?? null,
+            message: message ?? null,
+          },
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "file_upload_url",
+    {
+      description:
+        "Issue a pre-signed PUT URL for a single-file upload. Use this instead of file_put when the file is large (e.g. >100KB) — uploads bytes directly to R2 and avoids base64 token bloat. Send the bytes with `curl -X PUT --data-binary @<file> <upload_url>`.",
+      inputSchema: {
+        repo_id: z.string(),
+        path: z.string(),
+        mime: z.string().nullish(),
+        message: z.string().nullish(),
+      },
+    },
+    async ({ repo_id, path, mime, message }) =>
+      toResult(
+        await dispatch("POST", "/v1/files/upload-init", {
+          body: {
+            repo_id,
+            path,
+            mime: mime ?? null,
+            message: message ?? null,
+          },
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "folder_upload_url",
+    {
+      description:
+        "Issue a pre-signed PUT URL for a tar.gz bulk upload. Use this instead of repeated file_put when uploading many files — the server extracts the tar.gz under base_path and avoids base64 token bloat. Mirror of folder_download_url. Send the archive with `curl -X PUT --data-binary @<bundle.tar.gz> <upload_url>`. base_path = \"\" extracts at the repo root.",
+      inputSchema: {
+        repo_id: z.string(),
+        base_path: z.string().default(""),
+        message: z.string().nullish(),
+      },
+    },
+    async ({ repo_id, base_path, message }) =>
+      toResult(
+        await dispatch("POST", "/v1/files/bulk-upload-init", {
+          body: {
+            repo_id,
+            base_path,
             message: message ?? null,
           },
         }),
