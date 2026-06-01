@@ -1,6 +1,12 @@
 name = "ref-files-worker"
 main = "src/index.ts"
-compatibility_date = "2024-12-01"
+# 2025-05-01: nodejs_compat_v2 が自動有効化される閾値以降。`agents` SDK
+# (durable MCP transport で必要) が `mimetext` → `mime-types` の bare
+# `require("path")` を引っ張るため、esbuild に Node built-in として
+# resolve させる必要がある (= 旧 2024-12-01 では Deploy で
+# "Could not resolve 'path'" となり build fail)。echo-do-ws と同期。
+compatibility_date = "2025-05-01"
+compatibility_flags = ["nodejs_compat"]
 # auth-worker と同じアカウント。
 account_id = "24b45709d060d957340180e995f0d373"
 
