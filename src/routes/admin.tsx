@@ -38,6 +38,8 @@ function formatSize(bytes: number): string {
 
 interface TreeNode {
   name: string;
+  /** Full POSIX path from the repo root (used as the localStorage key). */
+  path: string;
   children: Map<string, TreeNode>;
   /** Present iff this node is a file leaf. */
   file?: InventoryEntry;
@@ -53,20 +55,20 @@ interface RepoTree {
   root: TreeNode;
 }
 
-function newNode(name: string): TreeNode {
-  return { name, children: new Map(), search: "" };
+function newNode(name: string, path: string): TreeNode {
+  return { name, path, children: new Map(), search: "" };
 }
 
 /** Split each file's POSIX path into folder nodes + a file leaf. */
 function buildTree(repoName: string, ownerLogin: string, files: InventoryEntry[]): TreeNode {
-  const root = newNode("");
+  const root = newNode("", "");
   for (const f of files) {
     const parts = f.path.split("/").filter((p) => p.length > 0);
     let node = root;
     parts.forEach((part, i) => {
       let child = node.children.get(part);
       if (!child) {
-        child = newNode(part);
+        child = newNode(part, parts.slice(0, i + 1).join("/"));
         node.children.set(part, child);
       }
       if (i === parts.length - 1) {
@@ -137,6 +139,21 @@ details.folder[open]>summary .nm::before{content:"▾ "}
 
 const SCRIPT = `
 (function(){
+  var LS='rfinv:';
+  var suppress=false; // don't persist search-driven auto-opens
+  document.querySelectorAll('details.folder').forEach(function(d){
+    var k=d.getAttribute('data-key');
+    if(k){
+      var v=null;try{v=localStorage.getItem(LS+k);}catch(e){}
+      // restore BEFORE wiring the listener so this doesn't get re-saved
+      if(v==='1')d.open=true;else if(v==='0')d.open=false;
+    }
+    d.addEventListener('toggle',function(){
+      if(suppress)return;
+      var kk=d.getAttribute('data-key');if(!kk)return;
+      try{localStorage.setItem(LS+kk,d.open?'1':'0');}catch(e){}
+    });
+  });
   var q=document.getElementById('q');
   if(!q)return;
   q.addEventListener('input',function(){
@@ -144,11 +161,13 @@ const SCRIPT = `
     document.querySelectorAll('.file').forEach(function(el){
       el.style.display=(!t||el.getAttribute('data-search').indexOf(t)>=0)?'':'none';
     });
+    suppress=true;
     document.querySelectorAll('details.folder').forEach(function(d){
       var hit=!t||d.getAttribute('data-search').indexOf(t)>=0;
       d.style.display=hit?'':'none';
       if(t&&hit)d.open=true;
     });
+    suppress=false;
     document.querySelectorAll('section.repo').forEach(function(sec){
       var anyFile=sec.querySelector('.file:not([style*="none"])');
       sec.style.display=(!t||anyFile)?'':'none';
@@ -169,19 +188,19 @@ const FileRow: FC<{ node: TreeNode }> = ({ node }) => {
   );
 };
 
-const FolderTree: FC<{ node: TreeNode }> = ({ node }) => (
+const FolderTree: FC<{ node: TreeNode; repoId: string }> = ({ node, repoId }) => (
   <>
     {sortedChildren(node).map((c) =>
       c.file && c.children.size === 0 ? (
         <FileRow node={c} />
       ) : (
-        <details class="folder" open data-search={c.search}>
+        <details class="folder" open data-search={c.search} data-key={`${repoId}:${c.path}`}>
           <summary>
             <span class="nm">{c.name}</span>
             <span class="fcnt">{countFiles(c)}</span>
           </summary>
           <div class="folder-body">
-            <FolderTree node={c} />
+            <FolderTree node={c} repoId={repoId} />
           </div>
         </details>
       ),
@@ -220,7 +239,7 @@ const InventoryPage: FC<{ viewer: string; count: number; repos: RepoTree[] }> = 
               <span class="owner">{r.ownerLogin}</span>
               <span class="cnt">{r.fileCount}</span>
             </h2>
-            <FolderTree node={r.root} />
+            <FolderTree node={r.root} repoId={r.repoId} />
           </section>
         ))
       )}
