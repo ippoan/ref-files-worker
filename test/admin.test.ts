@@ -81,3 +81,55 @@ describe("GET /ui/inventory (Cloudflare Access)", () => {
     expect(res.status).toBe(401);
   });
 });
+
+describe("GET /ui/inventory — HTML view", () => {
+  it("renders an HTML table for ?format=html", async () => {
+    await seed("html-u", "htmlrepo", "docs/readme.md", "hi");
+    const res = await uiInventory(accessHeader(), "?format=html");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const body = await res.text();
+    expect(body).toContain("ref-files inventory");
+    expect(body).toContain("<table");
+    expect(body).toContain("htmlrepo");
+    expect(body).toContain("docs/readme.md");
+  });
+
+  it("renders HTML when the client sends a browser Accept header", async () => {
+    const res = await uiInventory(
+      { ...accessHeader(), Accept: "text/html,application/xhtml+xml" },
+      "",
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/html");
+  });
+
+  it("?format=json forces JSON even with a browser Accept header", async () => {
+    const res = await uiInventory({ ...accessHeader(), Accept: "text/html" }, "?format=json");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toHaveProperty("files");
+  });
+
+  it("HTML-escapes user-derived values (no XSS via owner_login)", async () => {
+    // Insert a repo + file directly with a hostile owner_login so it reaches
+    // the renderer unfiltered (the /v1/* validation would normally reject it).
+    const repoId = `xss-${crypto.randomUUID()}`;
+    const now = new Date().toISOString();
+    await (env as unknown as { DB: D1Database }).DB.prepare(
+      "INSERT INTO repos (id, owner_login, name, created_at, updated_at) VALUES (?,?,?,?,?)",
+    )
+      .bind(repoId, "<script>alert(1)</script>", "xssrepo", now, now)
+      .run();
+    await (env as unknown as { DB: D1Database }).DB.prepare(
+      "INSERT INTO files (id, repo_id, name, path, current_revision_id, current_revision_number, size, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+    )
+      .bind(crypto.randomUUID(), repoId, "a.md", "a.md", crypto.randomUUID(), 1, 3, now, now)
+      .run();
+
+    const res = await uiInventory(accessHeader(), "?format=html");
+    const body = await res.text();
+    expect(body).not.toContain("<script>alert(1)</script>");
+    expect(body).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  });
+});
