@@ -30,7 +30,7 @@ MCP_JWT_AUDIENCE = "ref-files-mcp-server-rs"
 # worker は `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` の JWKS で
 # `Cf-Access-Jwt-Assertion` の RS256 署名を検証する (src/lib/cf-access-jwt.ts)。
 CF_ACCESS_TEAM_DOMAIN = "ippoan.cloudflareaccess.com"
-CF_ACCESS_AUD = ""  # ← Access Application 作成後に AUD tag を設定
+CF_ACCESS_AUD = "59e8528b8eb834683ab5c95dc767e63bba75f8c667396e92c72138f15e82c305"  # /ui/* Access Application の AUD tag
 
 [observability]
 enabled = true
