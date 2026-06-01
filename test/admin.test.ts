@@ -116,12 +116,12 @@ describe("GET /ui/inventory — HTML view", () => {
     // the renderer unfiltered (the /v1/* validation would normally reject it).
     const repoId = `xss-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
-    await env.DB.prepare(
+    await (env as unknown as { DB: D1Database }).DB.prepare(
       "INSERT INTO repos (id, owner_login, name, created_at, updated_at) VALUES (?,?,?,?,?)",
     )
       .bind(repoId, "<script>alert(1)</script>", "xssrepo", now, now)
       .run();
-    await env.DB.prepare(
+    await (env as unknown as { DB: D1Database }).DB.prepare(
       "INSERT INTO files (id, repo_id, name, path, current_revision_id, current_revision_number, size, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
     )
       .bind(crypto.randomUUID(), repoId, "a.md", "a.md", crypto.randomUUID(), 1, 3, now, now)
