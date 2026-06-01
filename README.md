@@ -13,16 +13,20 @@ src/
 ├── index.ts          # Hono root: composition only (middleware + sub-app mounts)
 ├── env.ts            # Bindings + Variables types shared by all routes
 ├── middleware/
-│   └── auth.ts       # /v1/* JWT middleware (HS256 verify, test-mode unsigned bearer)
+│   ├── auth.ts       # /v1/* JWT middleware (HS256 verify, test-mode unsigned bearer)
+│   └── cf-access.ts  # /ui/* Cloudflare Access middleware (RS256 JWKS verify)
 ├── routes/
 │   ├── repos.ts      # /v1/repos        -> repo_init
 │   ├── folders.ts    # /v1/folders      -> folder_create, folder_list
-│   └── files.ts      # /v1/files{,/*}   -> file_put/get/history/move/delete/search
+│   ├── files.ts      # /v1/files{,/*}   -> file_put/get/history/move/delete/search
+│   ├── inventory.ts  # /v1/inventory    -> cross-repo file listing (owner-scoped)
+│   └── admin.ts      # /ui/inventory    -> global cross-owner listing (CF Access)
 ├── db/
 │   ├── schema.ts     # Drizzle table defs matching migrations/0001_init.sql
 │   └── index.ts      # `db(env)` factory
 ├── lib/
 │   ├── jwt.ts        # HS256 verifier (Web Crypto, constant-time, 30s skew)
+│   ├── cf-access-jwt.ts # RS256 verifier for CF Access (JWKS fetch + cache)
 │   ├── path.ts       # POSIX-style path normalization + LIKE escape
 │   ├── hash.ts       # SHA-256 hex + base64 helpers
 │   └── repo-ops.ts   # repo ownership gate + mkdir -p helpers
@@ -131,6 +135,45 @@ miniflare D1 + R2.
   unsigned tokens. Staging / prod are unaffected.
 
 `/health` is unauthenticated and returns `{ ok, env, version }`.
+
+### Cross-repo inventory & the `/ui/*` Access surface
+
+Every `/v1/*` tool above is scoped to a single `repo_id`. To answer *"which
+file is wired to which repo"* across repos, there are two listing endpoints —
+one per audience:
+
+| Endpoint | Auth | Scope | Use |
+|----------|------|-------|-----|
+| `GET /v1/inventory` | MCP JWT (`/v1/*` middleware) | the caller's own `owner_login`, every repo | MCP server / API clients |
+| `GET /ui/inventory` | **Cloudflare Access** (`/ui/*` middleware) | **every owner** (global view) | a human in a browser, SSO |
+
+Both back onto the same `listInventory()` join (`files` × `repos`). Query
+params: `?repo=<name>` (exact repo-name filter; `?owner=<login>` too on the
+`/ui` view) and `?include_deleted=true`. Each row is
+`{ repo_id, repo_name, owner_login, file_id, path, size, mime, revision,
+updated_at, deleted_at }`. The `/ui` response wraps the list with
+`{ viewer, count, files }` where `viewer` is the Access-verified email.
+
+**Why two layers.** `/v1/*` is machine-to-machine (the HS256 secret shared
+with auth-worker), so putting Cloudflare Access in front of it would force the
+MCP server to also carry an Access service token — double auth. Instead Access
+covers only the human `/ui/*` path; `/v1/*` keeps the JWT it already has.
+
+`middleware/cf-access.ts` re-verifies the `Cf-Access-Jwt-Assertion` header
+Access forwards to the origin (RS256, JWKS from
+`https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, cached 1h, `iss` +
+`aud` + `exp` checked — see `lib/cf-access-jwt.ts`). In `WORKER_ENV=test` the
+signature is trusted (mirrors the `/v1/*` test bypass) so the suite needs no
+RSA keypair; `test/cf-access-jwt.test.ts` exercises the real RS256 path
+directly with an in-process keypair + stubbed JWKS.
+
+**Setup (Zero Trust dashboard — not in code):**
+
+1. Access → Applications → Add → *Self-hosted*.
+2. Application domain `ref-files.ippoan.org`, **path `/ui`**.
+3. Policy: the identities allowed to view the global inventory.
+4. Copy the Application **AUD tag** into `CF_ACCESS_AUD` (`wrangler.toml`);
+   `CF_ACCESS_TEAM_DOMAIN` is your `<team>.cloudflareaccess.com`.
 
 ### `POST /mcp/introspect`
 

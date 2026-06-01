@@ -13,8 +13,11 @@ import { Hono } from "hono";
 import type { AppEnv } from "./env";
 import { handleMcpIntrospect } from "./handlers/mcp-introspect";
 import { mcpAuth } from "./middleware/auth";
+import { cfAccess } from "./middleware/cf-access";
+import { admin } from "./routes/admin";
 import { files } from "./routes/files";
 import { folders } from "./routes/folders";
+import { inventory } from "./routes/inventory";
 import { repos } from "./routes/repos";
 import { uploads } from "./routes/uploads";
 
@@ -39,6 +42,13 @@ app.use("/v1/*", mcpAuth);
 app.route("/v1/repos", repos);
 app.route("/v1/folders", folders);
 app.route("/v1/files", files);
+app.route("/v1/inventory", inventory);
+
+// Cloudflare Access-gated human surface. SSO is terminated by Access in front
+// of the worker; `cfAccess` re-verifies the forwarded assertion. Spans every
+// owner (global inventory) — Access policy is the authorization boundary.
+app.use("/ui/*", cfAccess);
+app.route("/ui", admin);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 
