@@ -14,6 +14,7 @@ import type { AppEnv } from "./env";
 import { handleMcpIntrospect } from "./handlers/mcp-introspect";
 import { mcpAuth } from "./middleware/auth";
 import { cfAccess } from "./middleware/cf-access";
+import { handleMcp } from "./routes/mcp";
 import { admin } from "./routes/admin";
 import { files } from "./routes/files";
 import { folders } from "./routes/folders";
@@ -43,6 +44,13 @@ app.route("/v1/repos", repos);
 app.route("/v1/folders", folders);
 app.route("/v1/files", files);
 app.route("/v1/inventory", inventory);
+
+// Native Streamable HTTP MCP endpoint — same HS256 MCP-JWT auth as `/v1/*`.
+// Exact-path mount so it never shadows the `/mcp/introspect` route above.
+// Each tool re-dispatches through the `/v1/*` routes (see routes/mcp.ts), so
+// the D1 / R2 logic and owner scoping live in exactly one place.
+app.use("/mcp", mcpAuth);
+app.all("/mcp", (c) => handleMcp(c, app));
 
 // Cloudflare Access-gated human surface. SSO is terminated by Access in front
 // of the worker; `cfAccess` re-verifies the forwarded assertion. Spans every
