@@ -29,7 +29,7 @@ MCP_JWT_AUDIENCE = "ref-files-mcp-server-rs"
 # `CF_ACCESS_TEAM_DOMAIN` は team の Access ドメイン (`<team>.cloudflareaccess.com`)。
 # worker は `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` の JWKS で
 # `Cf-Access-Jwt-Assertion` の RS256 署名を検証する (src/lib/cf-access-jwt.ts)。
-CF_ACCESS_TEAM_DOMAIN = "ippoan.cloudflareaccess.com"
+CF_ACCESS_TEAM_DOMAIN = "mtamaramu.cloudflareaccess.com"
 CF_ACCESS_AUD = "59e8528b8eb834683ab5c95dc767e63bba75f8c667396e92c72138f15e82c305"  # /ui/* Access Application の AUD tag
 
 [observability]
