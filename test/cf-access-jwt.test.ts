@@ -13,7 +13,11 @@ const AUD = "test-app-aud";
 const KID = "unit-kid-1";
 
 let privateKey: CryptoKey;
-let jwk: JsonWebKey;
+// JWKS entry: a JsonWebKey plus the `kid` Access matches on. Typed loosely
+// because `wrangler types`' generated `JsonWebKey` has no `kid` field (and
+// `exportKey("jwk")` resolves to `JsonWebKey | ArrayBuffer`), which would trip
+// excess-property / union checks if we annotated it as `JsonWebKey`.
+let jwk: Record<string, unknown>;
 
 function b64url(bytes: Uint8Array | string): string {
   const bin = typeof bytes === "string" ? bytes : String.fromCharCode(...bytes);
@@ -65,7 +69,7 @@ beforeAll(async () => {
     ["sign", "verify"],
   )) as CryptoKeyPair;
   privateKey = pair.privateKey;
-  const pub = await crypto.subtle.exportKey("jwk", pair.publicKey);
+  const pub = (await crypto.subtle.exportKey("jwk", pair.publicKey)) as JsonWebKey;
   jwk = { ...pub, kid: KID, alg: "RS256" };
 });
 
