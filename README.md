@@ -20,6 +20,7 @@ src/
 │   ├── folders.ts    # /v1/folders      -> folder_create, folder_list
 │   ├── files.ts      # /v1/files{,/*}   -> file_put/get/history/move/delete/search
 │   ├── inventory.ts  # /v1/inventory    -> cross-repo file listing (owner-scoped)
+│   ├── mcp.ts        # /mcp             -> native Streamable HTTP MCP (createWorkerMcp)
 │   └── admin.ts      # /ui/inventory    -> global cross-owner listing (CF Access)
 ├── db/
 │   ├── schema.ts     # Drizzle table defs matching migrations/0001_init.sql
@@ -38,6 +39,36 @@ test/                 # vitest-pool-workers (in-process miniflare D1 + R2)
 ├── folders.test.ts   # mkdir -p + recursive listing + ownership 403
 └── files.test.ts     # put/get/history/move/delete/search semantics
 ```
+
+## Native `/mcp` endpoint (Streamable HTTP)
+
+Besides the `/v1/*` REST surface (consumed by the out-of-process
+`ref-files-mcp-server-rs` binary), the worker now speaks MCP itself at
+`POST /mcp`, using `createWorkerMcp` from
+[`@ippoan/mcp-cf-workers`](https://github.com/ippoan/mcp-cf-workers) (one
+`McpServer` + `WebStandardStreamableHTTPServerTransport` per request,
+stateless). A client can point straight at `https://ref-files.ippoan.org/mcp`
+— no relay binary needed.
+
+- **Auth** — same HS256 MCP-JWT as `/v1/*` (`mcpAuth` mounted on the exact
+  `/mcp` path, so it never gates the separate `/mcp/introspect` route).
+  `@ippoan/mcp-cf-workers@>=0.3` ships `mcpJwtMiddleware`, the
+  framework-agnostic equivalent of `mcpAuth`.
+- **Tools** — all nine `/v1` tools plus `repos_list` / `inventory` are
+  registered (`repo_init`, `repos_list`, `folder_create`, `folder_list`,
+  `file_put`, `file_get`, `file_history`, `file_move`, `file_delete`,
+  `file_search`, `inventory`). Each handler **re-dispatches through the
+  existing `/v1/*` Hono routes** with the caller's bearer, so the D1 / R2
+  logic and owner scoping stay in one place (`src/routes/mcp.ts`).
+- **Lazy import** — `createWorkerMcp` (via the SDK's `McpServer`) eagerly
+  pulls in `ajv`, which `@cloudflare/vitest-pool-workers` cannot load
+  (workerd can't resolve ajv's nested `./refs/data.json`). `routes/mcp.ts`
+  therefore `await import()`s the lib only on the first `/mcp` request, so the
+  rest of the worker — and its in-pool test suite — stays clean. Production
+  (esbuild) inlines ajv normally. The functional MCP tool tests in
+  `test/mcp.test.ts` are `describe.skip`ped for this reason (routing + auth
+  are still tested in-pool); `createWorkerMcp` itself is covered by
+  `@ippoan/mcp-cf-workers`'s node test suite.
 
 ## Type contract
 
