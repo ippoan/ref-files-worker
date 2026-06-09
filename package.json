@@ -9,6 +9,8 @@
     "deploy:staging": "wrangler deploy --env staging",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:check100": "node scripts/check_coverage_100.mjs",
     "typecheck": "tsc --noEmit",
     "d1:migrate:local": "wrangler d1 migrations apply ref_files --local",
     "d1:migrate:prod": "wrangler d1 migrations apply ref_files --remote",

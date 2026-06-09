@@ -1,0 +1,27 @@
+# 100% カバレッジ達成済みファイル登録簿 (auth-worker pattern, Refs #2)
+#
+# CI (ci-workflows frontend-ci.yml) は `scripts/check_coverage_100.mjs` の存在を
+# auto-detect し、coverage/coverage-summary.json と照合してリグレッションを検出する。
+# 確認: npm run test:coverage → npm run test:check100
+#
+# branches = true のファイルは Branches 100% もチェックする。未指定は Lines のみ。
+# 100% に到達したファイルをここへ追記していくことで、後退を CI で防ぐ。
+
+# --- db ---
+
+[[files]]
+path = "src/db/index.ts"
+branches = true
+
+# --- lib ---
+
+[[files]]
+path = "src/lib/hash.ts"
+
+[[files]]
+path = "src/lib/path.ts"
+
+# --- routes ---
+
+[[files]]
+path = "src/routes/inventory.ts"
