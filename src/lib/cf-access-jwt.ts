@@ -18,6 +18,8 @@
  * are cached per team domain for `JWKS_TTL_MS` so each request doesn't re-fetch.
  */
 
+import { b64urlToBytes, b64urlToString } from "@ippoan/mcp-cf-workers/auth";
+
 const SKEW_SECONDS = 30;
 const JWKS_TTL_MS = 60 * 60 * 1000; // 1h — Access rotates keys slowly.
 
@@ -51,19 +53,6 @@ interface JwksCacheEntry {
 }
 
 const jwksCache = new Map<string, JwksCacheEntry>();
-
-function b64urlToBytes(s: string): Uint8Array {
-  const pad = s.length % 4 === 0 ? "" : "=".repeat(4 - (s.length % 4));
-  const b64 = (s + pad).replace(/-/g, "+").replace(/_/g, "/");
-  const bin = atob(b64);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-function b64urlToString(s: string): string {
-  return new TextDecoder().decode(b64urlToBytes(s));
-}
 
 /** `https://<team>.cloudflareaccess.com` from a bare team domain or full URL. */
 function teamIssuer(teamDomain: string): string {
