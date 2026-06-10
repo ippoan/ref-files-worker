@@ -26,6 +26,7 @@
  *
  * `Cache-Control: no-store` per RFC 7662 §4.
  */
+import { resolveSecret, timingSafeEqual } from "@ippoan/mcp-cf-workers/auth";
 import type { Env } from "../env";
 import { verifyMcpJwt, type McpJwtClaims } from "../lib/jwt";
 
@@ -39,41 +40,16 @@ function jsonNoStore(data: unknown, status = 200): Response {
   });
 }
 
-function constantTimeEquals(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-/**
- * Normalise either binding shape to a plain string for comparison.
- *
- * - Worker secret / vitest binding → already a string, return it.
- * - Secrets Store binding (`SecretsStoreSecret`) → call `.get()` and unwrap.
- * - Missing or unreadable → `null` so the caller can return 503.
- *
- * The dual-mode keeps vitest fixtures (which bind plain strings via
- * `WorkerEntrypoint`) compatible with prod Secrets Store bindings.
- */
-async function resolveBinding(
-  binding: string | SecretsStoreSecret | undefined,
-): Promise<string | null> {
-  if (!binding) return null;
-  if (typeof binding === "string") return binding;
-  try {
-    return await binding.get();
-  } catch {
-    return null;
-  }
-}
+// binding 正規化 (string | SecretsStoreSecret → string|null) は lib の
+// resolveSecret を消費する (Refs ippoan/mcp-cf-workers#46)。vitest の plain
+// string binding と prod Secrets Store binding の dual-mode 動作は同一。
 
 export function resolveInternalSharedSecret(env: Env): Promise<string | null> {
-  return resolveBinding(env.INTERNAL_SHARED_SECRET);
+  return resolveSecret(env.INTERNAL_SHARED_SECRET);
 }
 
 export function resolveMcpJwtSecret(env: Env): Promise<string | null> {
-  return resolveBinding(env.MCP_JWT_SECRET);
+  return resolveSecret(env.MCP_JWT_SECRET);
 }
 
 function activeFromClaims(claims: McpJwtClaims) {
@@ -149,7 +125,9 @@ export async function handleMcpIntrospect(
   }
 
   // Mode 2 — raw INTERNAL_SHARED_SECRET + body { token }.
-  if (!authz || !constantTimeEquals(authz, sharedSecret)) {
+  // timingSafeEqual (lib 版) は HMAC 固定長化で長さもリークしない (旧ローカル実装
+  // は長さ不一致で早期 return する微リークがあった)。
+  if (!authz || !(await timingSafeEqual(authz, sharedSecret))) {
     return jsonNoStore({ error: "unauthorized" }, 401);
   }
 
